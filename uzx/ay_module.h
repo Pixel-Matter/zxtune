@@ -26,8 +26,12 @@ namespace UzxAY
   struct Tune
   {
     std::string Format;                     // zxtune's format name, e.g. "Pro Tracker v3.x"
+    std::string Title;                      // UTF-8, empty when the module stores none;
+                                            // a Turbo Sound pair's two titles as "first/second" if they differ
+    std::string NoteTable;                  // zxtune's frequency table name, e.g. "ProTracker3.4_ASM"; joined like Title
     double FrameRate = 50;                  // frames per second
     std::vector<std::vector<Frame>> Chips;  // one per AY chip, two for Turbo Sound; all the same length
+    std::vector<std::size_t> RowStarts;     // the frame each pattern row starts at, in play order
   };
 
   // Plays a module (PT3, PT2, STC, ASC, SQT, Vortex Tracker text, a Turbo Sound pair, ...) up to its

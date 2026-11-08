@@ -9,14 +9,17 @@
 #include "uzx/ay_module.h"
 
 #include "binary/container_factories.h"
+#include "core/core_parameters.h"
 #include "formats/chiptune/decoders.h"
 #include "module/players/aym/all.h"
 #include "module/players/aym/aym_base.h"
 #include "module/players/aym/aym_factory.h"
 #include "module/players/aym/protracker3.h"
 #include "module/players/aym/ts.h"
+#include "module/attributes.h"
 #include "module/players/aym/turbosound.h"
 #include "parameters/container.h"
+#include "strings/encoding.h"
 
 #include <memory>
 #include <utility>
@@ -142,14 +145,33 @@ namespace UzxAY
       Registers Last;
     };
 
+    // Calls onFrame with each frame's registers up to the loop; returns the frames rows start at.
     template<class Iterator, class OnFrame>
-    void PlayToLoop(Iterator& iterator, OnFrame onFrame)
+    std::vector<std::size_t> PlayToLoop(Iterator& iterator, OnFrame onFrame)
     {
-      for (std::size_t frame = 0; !iterator.GetState().LoopCount && frame != MAX_FRAMES; ++frame)
+      std::vector<std::size_t> rowStarts;
+      for (std::size_t frame = 0; frame != MAX_FRAMES; ++frame)
       {
+        const auto state = iterator.GetState();
+        if (state.LoopCount)
+        {
+          break;
+        }
+        if (state.Track && state.Track->Quirk == 0)  // the first frame of a row
+        {
+          rowStarts.push_back(frame);
+        }
         onFrame(iterator.GetData());
         iterator.NextFrame();
       }
+      return rowStarts;
+    }
+
+    std::string FindText(const Parameters::Accessor& props, Parameters::Identifier name)
+    {
+      String value;
+      Parameters::FindValue(props, name, value);
+      return value;
     }
 
     double FrameRate(Time::Microseconds frameDuration)
@@ -161,13 +183,15 @@ namespace UzxAY
     {
       Tune result;
       result.Format = std::move(format);
+      Parameters::Accessor::Ptr properties;
       if (const auto* single = dynamic_cast<const MA::Holder*>(&holder))
       {
         const auto chiptune = single->GetChiptune();
         const auto iterator = chiptune->CreateDataIterator(MA::TrackParameters::Create(chiptune->GetProperties()));
         Recorder chip;
-        PlayToLoop(*iterator, [&chip](const Registers& regs) { chip.Add(regs); });
+        result.RowStarts = PlayToLoop(*iterator, [&chip](const Registers& regs) { chip.Add(regs); });
         result.FrameRate = FrameRate(chiptune->GetFrameDuration());
+        properties = chiptune->GetProperties();
         result.Chips.push_back(std::move(chip.Frames));
       }
       else if (const auto* pair = dynamic_cast<const Module::TurboSound::Holder*>(&holder))
@@ -177,11 +201,12 @@ namespace UzxAY
         const auto iterator =
             chiptune.CreateDataIterator(MA::TrackParameters::Create(props, 0), MA::TrackParameters::Create(props, 1));
         Recorder chips[2];
-        PlayToLoop(*iterator, [&chips](const Devices::TurboSound::Registers& regs) {
+        result.RowStarts = PlayToLoop(*iterator, [&chips](const Devices::TurboSound::Registers& regs) {
           chips[0].Add(regs[0]);
           chips[1].Add(regs[1]);
         });
         result.FrameRate = FrameRate(chiptune.GetFrameDuration());
+        properties = props;
         result.Chips.push_back(std::move(chips[0].Frames));
         result.Chips.push_back(std::move(chips[1].Frames));
       }
@@ -189,6 +214,9 @@ namespace UzxAY
       {
         return {};
       }
+      // A Turbo Sound pair's properties are both modules': where they differ, joined with '/'.
+      result.Title = Strings::ToAutoUtf8(FindText(*properties, Module::ATTR_TITLE));  // Vortex text keeps CP1251/866
+      result.NoteTable = FindText(*properties, Parameters::ZXTune::Core::AYM::TABLE);
       return result;
     }
   }  // namespace
