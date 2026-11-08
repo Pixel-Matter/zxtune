@@ -14,6 +14,8 @@
 #include "types.h"
 
 #include <array>
+#include <cstddef>
+#include <utility>
 
 #ifndef DO_LITERAL
 #  define DO_LITERAL_IMPL(str, lit) str##lit
@@ -145,10 +147,30 @@ namespace Debug
   }
 }  // namespace Debug
 
-template<typename C, C... Chars>
-constexpr auto operator"" _source()
+namespace Debug
 {
-  return Debug::MakeSourceFile<0, C, Chars...>();
+  // uzx: see operator""_id in parameters/identifier.h
+  template<std::size_t Size>
+  struct SourceLiteral
+  {
+    constexpr SourceLiteral(const char (&str)[Size])
+    {
+      for (std::size_t i = 0; i != Size; ++i)
+      {
+        Symbols[i] = str[i];
+      }
+    }
+
+    char Symbols[Size] = {};
+  };
+}  // namespace Debug
+
+template<Debug::SourceLiteral Literal>
+constexpr auto operator""_source()
+{
+  return []<std::size_t... Indices>(std::index_sequence<Indices...>) {
+    return Debug::MakeSourceFile<0, char, Literal.Symbols[Indices]...>();
+  }(std::make_index_sequence<sizeof(Literal.Symbols) - 1>{});
 }
 
 #define ThisFile() DO_LITERAL(__FILE__, _source)
