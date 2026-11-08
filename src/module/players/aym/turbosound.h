@@ -49,5 +49,12 @@ namespace Module::TurboSound
 
   Chiptune::Ptr CreateChiptune(Parameters::Accessor::Ptr params, AYM::Chiptune::Ptr first, AYM::Chiptune::Ptr second);
 
+  // uzx: exposes the chiptune, like AYM::Holder::GetChiptune(), to read both chips' registers frame by frame.
+  class Holder : public Module::Holder
+  {
+  public:
+    virtual const Chiptune& GetChiptune() const = 0;
+  };
+
   Holder::Ptr CreateHolder(Chiptune::Ptr chiptune);
 }  // namespace Module::TurboSound

@@ -299,10 +299,10 @@ namespace Module::TurboSound
     return Devices::TurboSound::CreateChip(std::move(chipParams), std::move(mixer));
   }
 
-  class Holder : public Module::Holder
+  class HolderImpl : public Holder
   {
   public:
-    Holder(Chiptune::Ptr chiptune)
+    HolderImpl(Chiptune::Ptr chiptune)
       : Tune(std::move(chiptune))
     {}
 
@@ -332,6 +332,11 @@ namespace Module::TurboSound
                                std::move(chip));
     }
 
+    const Chiptune& GetChiptune() const override
+    {
+      return *Tune;
+    }
+
   private:
     const Chiptune::Ptr Tune;
   };
@@ -349,6 +354,6 @@ namespace Module::TurboSound
 
   Holder::Ptr CreateHolder(Chiptune::Ptr chiptune)
   {
-    return MakePtr<Holder>(std::move(chiptune));
+    return MakePtr<HolderImpl>(std::move(chiptune));
   }
 }  // namespace Module::TurboSound
