@@ -12,7 +12,7 @@
 
 #include "zxtune.h"
 
-#include "parameters/types.h"
+#include "parameters/value_types.h"
 
 namespace Parameters::ZXTune::Core
 {

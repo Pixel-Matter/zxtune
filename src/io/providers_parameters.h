@@ -11,7 +11,7 @@
 #pragma once
 
 #include "io/io_parameters.h"
-#include "parameters/types.h"
+#include "parameters/value_types.h"
 
 namespace Parameters::ZXTune::IO::Providers
 {

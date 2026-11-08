@@ -15,6 +15,9 @@ It differs from upstream [vitamin-caig/zxtune](https://github.com/vitamin-caig/z
 - **Patches**, each a commit marked `uzx:`
   - standard C++20 `_id` and `_source` literal operators (the GNU forms don't build with MSVC);
   - fmt without consteval format strings (Apple clang 21);
+  - iterators, not pointers, from `string_view` and `array` (MSVC's are classes), and
+    `parameters/types.h` renamed `parameters/value_types.h`: MSVC looks for a quoted include in the
+    folders of every file up the include stack, so `"types.h"` found it instead of `include/types.h`;
   - `TurboSound::Holder::GetChiptune()`, to read both chips of a Turbo Sound module.
 
 ## Updating to an upstream tag
