@@ -14,6 +14,8 @@
 #include "string_view.h"
 
 #include <array>
+#include <cstddef>
+#include <utility>
 
 namespace Parameters
 {
@@ -122,9 +124,27 @@ namespace Parameters
     constexpr static const std::array<char, sizeof...(Symbols)> Storage = {Symbols...};
   };
 
-  template<typename CharType, CharType... Symbols>
-  constexpr auto operator"" _id()
+  // uzx: a standard C++20 literal operator template; the <typename CharType, CharType...> form is a GNU
+  // extension that MSVC rejects.
+  template<std::size_t Size>
+  struct IdentifierLiteral
   {
-    return StaticIdentifier<Symbols...>{};
+    constexpr IdentifierLiteral(const char (&str)[Size])
+    {
+      for (std::size_t i = 0; i != Size; ++i)
+      {
+        Symbols[i] = str[i];
+      }
+    }
+
+    char Symbols[Size] = {};
+  };
+
+  template<IdentifierLiteral Literal>
+  constexpr auto operator""_id()
+  {
+    return []<std::size_t... Indices>(std::index_sequence<Indices...>) {
+      return StaticIdentifier<Literal.Symbols[Indices]...>{};
+    }(std::make_index_sequence<sizeof(Literal.Symbols) - 1>{});
   }
 }  // namespace Parameters
