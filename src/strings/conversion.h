@@ -28,8 +28,8 @@ namespace Strings
     else
     {
       auto result = T();
-      const auto* const it = str.begin();
-      const auto* const lim = str.end();
+      const auto* const it = str.data();
+      const auto* const lim = str.data() + str.size();
       const auto res = std::from_chars(it + (it != lim && *it == '+'), lim, result);
       if (res.ec == std::errc::result_out_of_range)
       {

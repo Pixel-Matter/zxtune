@@ -771,7 +771,7 @@ namespace Strings
   public:
     bool Check(StringView str) const override
     {
-      for (const auto* it = str.begin(); it != str.end(); ++it)
+      for (auto it = str.begin(); it != str.end(); ++it)
       {
         const uint8_t s1 = *it;
         if (s1 == 0x80 || s1 == 0xa0 || s1 >= 0xf0)
@@ -807,7 +807,7 @@ namespace Strings
     {
       std::vector<uint32_t> result;
       result.reserve(str.size());
-      for (const auto* it = str.begin(); it != str.end(); ++it)
+      for (auto it = str.begin(); it != str.end(); ++it)
       {
         const uint8_t s1 = *it;
         if (s1 == 0x5c)
@@ -923,7 +923,7 @@ namespace Strings
     Strings::Utf8Builder builder;
     builder.Reserve(str.size());
     bool needSwap = false;
-    for (const auto* it = str.begin(); it != str.end();)
+    for (auto it = str.begin(); it != str.end();)
     {
       const uint32_t sym = needSwap ? swapBytes(*it) : (*it);
       ++it;

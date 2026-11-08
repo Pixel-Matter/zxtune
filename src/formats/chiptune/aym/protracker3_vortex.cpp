@@ -255,7 +255,7 @@ namespace Formats::Chiptune
       explicit SignedHexObject(StringView val)
       {
         Require(val.size() == Width + 1);
-        const auto* it = val.begin();
+        auto it = val.begin();
         const SignFlag sign(*it);
         for (++it; it != val.end(); ++it)
         {
@@ -833,7 +833,7 @@ namespace Formats::Chiptune
     private:
       uint_t AsInt() const
       {
-        const auto* const notePos = std::find(NOTES.begin(), NOTES.end(), Val.substr(0, 2));
+        const auto notePos = std::find(NOTES.begin(), NOTES.end(), Val.substr(0, 2));
         Require(notePos != NOTES.end());
         const uint_t halftone = notePos - NOTES.begin();
         const char octave = Val[2];
