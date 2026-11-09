@@ -720,9 +720,11 @@ namespace Formats::Chiptune
         void ParseMasks(StringView str)
         {
           Require(str.size() == 3);
-          ToneMask = ToneFlag(str[0]).AsBool();
-          NoiseMask = NoiseFlag(str[1]).AsBool();
-          EnvMask = EnvelopeFlag(str[2]).AsBool();
+          // uzx: Vortex Tracker 2.5 and later write '.' for what is off, earlier versions the lower case letter
+          const auto off = [](char flag, char lower) { return flag == '.' ? lower : flag; };
+          ToneMask = ToneFlag(off(str[0], 't')).AsBool();
+          NoiseMask = NoiseFlag(off(str[1], 'n')).AsBool();
+          EnvMask = EnvelopeFlag(off(str[2], 'e')).AsBool();
         }
 
         String UnparseMasks() const
@@ -1179,7 +1181,7 @@ namespace Formats::Chiptune
           const auto line = Source.ReadString();
           if (line.empty())
           {
-            return Source.GetPosition();
+            continue;  // uzx: Vortex Tracker 2.5 and later leave two blank lines after the header
           }
           if (const SectionHeader ornHdr = OrnamentObject::ParseHeader(line))
           {
