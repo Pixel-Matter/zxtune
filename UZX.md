@@ -18,7 +18,10 @@ It differs from upstream [vitamin-caig/zxtune](https://github.com/vitamin-caig/z
   - iterators, not pointers, from `string_view` and `array` (MSVC's are classes), and
     `parameters/types.h` renamed `parameters/value_types.h`: MSVC looks for a quoted include in the
     folders of every file up the include stack, so `"types.h"` found it instead of `include/types.h`;
-  - `TurboSound::Holder::GetChiptune()`, to read both chips of a Turbo Sound module.
+  - `TurboSound::Holder::GetChiptune()`, to read both chips of a Turbo Sound module;
+  - Vortex Tracker 2.5 and later text modules: `.` for what a sample line turns off, and two blank
+    lines after the header. `uzx/` reads the rest itself: a Turbo Sound tune saved as a module per
+    chip, one after another, and `ChipFreq` / `IntFreq`, which zxtune ignores.
 
 ## Updating to an upstream tag
 

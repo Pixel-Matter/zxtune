@@ -27,16 +27,18 @@ namespace UzxAY
   {
     std::string Format;                     // zxtune's format name, e.g. "Pro Tracker v3.x"
     std::string Title;                      // UTF-8, empty when the module stores none;
-                                            // a Turbo Sound pair's two titles as "first/second" if they differ
+                                            // Turbo Sound chips' titles as "first/second" if they differ
     std::string NoteTable;                  // zxtune's frequency table name, e.g. "ProTracker3.4_ASM"; joined like Title
     double FrameRate = 50;                  // frames per second
-    std::vector<std::vector<Frame>> Chips;  // one per AY chip, two for Turbo Sound; all the same length
+    double ChipClock = 0;                   // Hz; 0 when the module doesn't store it (only Vortex Tracker text does)
+    std::vector<std::vector<Frame>> Chips;  // one per AY chip, two or three for Turbo Sound; all the same length
     std::vector<std::size_t> RowStarts;     // the frame each pattern row starts at, in play order
   };
 
   // Plays a module (PT3, PT2, STC, ASC, SQT, Vortex Tracker text, a Turbo Sound pair, ...) up to its
-  // first loop. Writes follow zxtune's PSG dumper: values cut to the register width, unchanged values
-  // not repeated, except the envelope shape, whose write restarts the envelope.
+  // first loop; the chips of a Turbo Sound tune play for as long as its first chip does. Writes follow
+  // zxtune's PSG dumper: values cut to the register width, unchanged values not repeated, except the
+  // envelope shape, whose write restarts the envelope.
   // Empty when the data is not a module of a supported format.
   std::optional<Tune> Play(const void* data, std::size_t size);
 }  // namespace UzxAY

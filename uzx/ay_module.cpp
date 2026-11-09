@@ -21,7 +21,10 @@
 #include "parameters/container.h"
 #include "strings/encoding.h"
 
+#include <cstdlib>
 #include <memory>
+#include <string>
+#include <string_view>
 #include <utility>
 
 namespace UzxAY
@@ -179,45 +182,178 @@ namespace UzxAY
       return 1e6 / static_cast<double>(frameDuration.Get());
     }
 
-    std::optional<Tune> Record(const Module::Holder& holder, std::string format)
+    // zxtune's rule for the strings of a Turbo Sound tune's chips: "first/second" if they differ.
+    void Join(std::string& joined, const std::string& value, bool first)
     {
-      Tune result;
-      result.Format = std::move(format);
-      Parameters::Accessor::Ptr properties;
-      if (const auto* single = dynamic_cast<const MA::Holder*>(&holder))
+      if (first)
       {
-        const auto chiptune = single->GetChiptune();
-        const auto iterator = chiptune->CreateDataIterator(MA::TrackParameters::Create(chiptune->GetProperties()));
-        Recorder chip;
-        result.RowStarts = PlayToLoop(*iterator, [&chip](const Registers& regs) { chip.Add(regs); });
-        result.FrameRate = FrameRate(chiptune->GetFrameDuration());
-        properties = chiptune->GetProperties();
-        result.Chips.push_back(std::move(chip.Frames));
+        joined = value;
       }
-      else if (const auto* pair = dynamic_cast<const Module::TurboSound::Holder*>(&holder))
+      else if (joined != value)
       {
-        const auto& chiptune = pair->GetChiptune();
-        const auto props = chiptune.GetProperties();
-        const auto iterator =
-            chiptune.CreateDataIterator(MA::TrackParameters::Create(props, 0), MA::TrackParameters::Create(props, 1));
-        Recorder chips[2];
-        result.RowStarts = PlayToLoop(*iterator, [&chips](const Devices::TurboSound::Registers& regs) {
-          chips[0].Add(regs[0]);
-          chips[1].Add(regs[1]);
-        });
-        result.FrameRate = FrameRate(chiptune.GetFrameDuration());
-        properties = props;
-        result.Chips.push_back(std::move(chips[0].Frames));
-        result.Chips.push_back(std::move(chips[1].Frames));
+        joined += '/' + value;
       }
-      if (result.Chips.empty() || result.Chips.front().empty())
+    }
+
+    void ReadText(Tune& tune, const Parameters::Accessor& properties, bool first)
+    {
+      Join(tune.Title, Strings::ToAutoUtf8(FindText(properties, Module::ATTR_TITLE)), first);  // Vortex text keeps CP1251/866
+      Join(tune.NoteTable, FindText(properties, Parameters::ZXTune::Core::AYM::TABLE), first);
+    }
+
+    std::optional<Tune> NotEmpty(Tune tune)
+    {
+      if (tune.Chips.front().empty())
       {
         return {};
       }
-      // A Turbo Sound pair's properties are both modules': where they differ, joined with '/'.
-      result.Title = Strings::ToAutoUtf8(FindText(*properties, Module::ATTR_TITLE));  // Vortex text keeps CP1251/866
-      result.NoteTable = FindText(*properties, Parameters::ZXTune::Core::AYM::TABLE);
-      return result;
+      return tune;
+    }
+
+    // Chips that play one tune: the first chip's rows and loop lead, as in zxtune's Turbo Sound.
+    class Together
+    {
+    public:
+      explicit Together(const std::vector<MA::Chiptune::Ptr>& chiptunes)
+      {
+        for (const auto& chiptune : chiptunes)
+        {
+          Chips.push_back(chiptune->CreateDataIterator(MA::TrackParameters::Create(chiptune->GetProperties())));
+        }
+      }
+
+      auto GetState() const
+      {
+        return Chips.front()->GetState();
+      }
+
+      std::vector<Registers> GetData() const
+      {
+        std::vector<Registers> regs;
+        for (const auto& chip : Chips)
+        {
+          regs.push_back(chip->GetData());
+        }
+        return regs;
+      }
+
+      void NextFrame()
+      {
+        for (const auto& chip : Chips)
+        {
+          chip->NextFrame();
+        }
+      }
+
+    private:
+      std::vector<MA::DataIterator::Ptr> Chips;
+    };
+
+    std::optional<Tune> Record(const std::vector<MA::Chiptune::Ptr>& chiptunes, std::string format)
+    {
+      Tune result;
+      result.Format = std::move(format);
+      Together together(chiptunes);
+      std::vector<Recorder> chips(chiptunes.size());
+      result.RowStarts = PlayToLoop(together, [&chips](const std::vector<Registers>& regs) {
+        for (std::size_t chip = 0; chip != chips.size(); ++chip)
+        {
+          chips[chip].Add(regs[chip]);
+        }
+      });
+      result.FrameRate = FrameRate(chiptunes.front()->GetFrameDuration());
+      for (std::size_t chip = 0; chip != chips.size(); ++chip)
+      {
+        ReadText(result, *chiptunes[chip]->GetProperties(), chip == 0);
+        result.Chips.push_back(std::move(chips[chip].Frames));
+      }
+      return NotEmpty(std::move(result));
+    }
+
+    std::optional<Tune> Record(const Module::Holder& holder, std::string format)
+    {
+      if (const auto* single = dynamic_cast<const MA::Holder*>(&holder))
+      {
+        return Record({single->GetChiptune()}, std::move(format));
+      }
+      const auto* pair = dynamic_cast<const Module::TurboSound::Holder*>(&holder);
+      if (!pair)
+      {
+        return {};
+      }
+      Tune result;
+      result.Format = std::move(format);
+      const auto& chiptune = pair->GetChiptune();
+      const auto props = chiptune.GetProperties();
+      const auto iterator =
+          chiptune.CreateDataIterator(MA::TrackParameters::Create(props, 0), MA::TrackParameters::Create(props, 1));
+      Recorder chips[2];
+      result.RowStarts = PlayToLoop(*iterator, [&chips](const Devices::TurboSound::Registers& regs) {
+        chips[0].Add(regs[0]);
+        chips[1].Add(regs[1]);
+      });
+      result.FrameRate = FrameRate(chiptune.GetFrameDuration());
+      ReadText(result, *props, true);  // zxtune has joined the chips' strings
+      result.Chips.push_back(std::move(chips[0].Frames));
+      result.Chips.push_back(std::move(chips[1].Frames));
+      return NotEmpty(std::move(result));
+    }
+
+    // Vortex Tracker's text modules: a Turbo Sound tune is one module per chip, one after another.
+    constexpr std::string_view VORTEX_MODULE = "[Module]";
+
+    std::vector<std::string_view> SplitVortexModules(std::string_view text)
+    {
+      std::vector<std::string_view> modules;
+      for (std::size_t start = 0; start != std::string_view::npos;)
+      {
+        const auto next = text.find("\n" + std::string(VORTEX_MODULE), start);
+        const auto end = next == std::string_view::npos ? text.size() : next + 1;
+        modules.push_back(text.substr(start, end - start));
+        start = next == std::string_view::npos ? next : end;
+      }
+      return modules;
+    }
+
+    // A number in a Vortex Tracker module's header, such as "ChipFreq=1750000"; 0 when there is none.
+    double HeaderNumber(std::string_view module, std::string_view name)
+    {
+      const auto key = "\n" + std::string(name) + '=';
+      const auto pos = module.find(key);
+      if (pos == std::string_view::npos)
+      {
+        return 0;
+      }
+      return std::strtod(std::string(module.substr(pos + key.size(), 16)).c_str(), nullptr);
+    }
+
+    std::optional<Tune> PlayVortexText(std::string_view text, const AnyModuleFactory& formats)
+    {
+      const auto params = Parameters::Container::Create();
+      std::vector<MA::Chiptune::Ptr> chiptunes;
+      for (const auto module : SplitVortexModules(text))
+      {
+        const auto data = Binary::CreateContainer(Binary::View(module.data(), module.size()));
+        const auto holder = data ? formats.CreateModule(*params, *data, Parameters::Container::Create()) : nullptr;
+        const auto* single = dynamic_cast<const MA::Holder*>(holder.get());
+        if (!single)
+        {
+          return {};
+        }
+        chiptunes.push_back(single->GetChiptune());
+      }
+      auto tune = Record(chiptunes, formats.LastFormat);
+      if (!tune)
+      {
+        return {};
+      }
+      // Vortex Tracker 2.5 and later store the clock and interrupt rate the tune was written for (IntFreq in mHz).
+      tune->ChipClock = HeaderNumber(text, "ChipFreq");
+      if (const auto interruptRate = HeaderNumber(text, "IntFreq"); interruptRate > 0)
+      {
+        tune->FrameRate = interruptRate / 1000;
+      }
+      return tune;
     }
   }  // namespace
 
@@ -246,6 +382,10 @@ namespace UzxAY
       }
 
       const AnyModuleFactory modules;
+      if (const std::string_view text(static_cast<const char*>(data), size); text.starts_with(VORTEX_MODULE))
+      {
+        return PlayVortexText(text, modules);
+      }
       if (const auto holder = modules.CreateModule(*params, *container, Parameters::Container::Create()))
       {
         return Record(*holder, modules.LastFormat);
