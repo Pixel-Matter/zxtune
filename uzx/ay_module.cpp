@@ -22,6 +22,7 @@
 #include "strings/encoding.h"
 
 #include <cstdlib>
+#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -148,26 +149,32 @@ namespace UzxAY
       Registers Last;
     };
 
-    // Calls onFrame with each frame's registers up to the loop; returns the frames rows start at.
+    // Calls onFrame with each frame's registers up to the loop; sets the tune's row starts and loop frame.
     template<class Iterator, class OnFrame>
-    std::vector<std::size_t> PlayToLoop(Iterator& iterator, OnFrame onFrame)
+    void PlayToLoop(Iterator& iterator, OnFrame onFrame, Tune& tune)
     {
-      std::vector<std::size_t> rowStarts;
+      std::map<uint_t, std::size_t> positionStarts;  // the frame each order list position starts at
       for (std::size_t frame = 0; frame != MAX_FRAMES; ++frame)
       {
         const auto state = iterator.GetState();
         if (state.LoopCount)
         {
+          // Looped back to the first row of the loop position
+          if (const auto start = state.Track ? positionStarts.find(state.Track->Position) : positionStarts.end();
+              start != positionStarts.end())
+          {
+            tune.LoopFrame = start->second;
+          }
           break;
         }
         if (state.Track && state.Track->Quirk == 0)  // the first frame of a row
         {
-          rowStarts.push_back(frame);
+          tune.RowStarts.push_back(frame);
+          positionStarts.try_emplace(state.Track->Position, frame);
         }
         onFrame(iterator.GetData());
         iterator.NextFrame();
       }
-      return rowStarts;
     }
 
     std::string FindText(const Parameters::Accessor& props, Parameters::Identifier name)
@@ -255,12 +262,13 @@ namespace UzxAY
       result.Format = std::move(format);
       Together together(chiptunes);
       std::vector<Recorder> chips(chiptunes.size());
-      result.RowStarts = PlayToLoop(together, [&chips](const std::vector<Registers>& regs) {
+      const auto record = [&chips](const std::vector<Registers>& regs) {
         for (std::size_t chip = 0; chip != chips.size(); ++chip)
         {
           chips[chip].Add(regs[chip]);
         }
-      });
+      };
+      PlayToLoop(together, record, result);
       result.FrameRate = FrameRate(chiptunes.front()->GetFrameDuration());
       for (std::size_t chip = 0; chip != chips.size(); ++chip)
       {
@@ -288,10 +296,11 @@ namespace UzxAY
       const auto iterator =
           chiptune.CreateDataIterator(MA::TrackParameters::Create(props, 0), MA::TrackParameters::Create(props, 1));
       Recorder chips[2];
-      result.RowStarts = PlayToLoop(*iterator, [&chips](const Devices::TurboSound::Registers& regs) {
+      const auto record = [&chips](const Devices::TurboSound::Registers& regs) {
         chips[0].Add(regs[0]);
         chips[1].Add(regs[1]);
-      });
+      };
+      PlayToLoop(*iterator, record, result);
       result.FrameRate = FrameRate(chiptune.GetFrameDuration());
       ReadText(result, *props, true);  // zxtune has joined the chips' strings
       result.Chips.push_back(std::move(chips[0].Frames));
