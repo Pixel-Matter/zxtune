@@ -10,7 +10,9 @@
 
 #include "module/players/tfm/tfm_factory.h"
 
+#include "module/players/properties_helper.h"
 #include "module/players/tfm/tfm_base.h"
+#include "module/players/tfm/tfm_parameters.h"
 
 #include "make_ptr.h"
 
@@ -28,9 +30,11 @@ namespace Module::TFM
     Holder::Ptr CreateModule(const Parameters::Accessor& /*params*/, const Binary::Container& data,
                              Parameters::Container::Ptr properties) const override
     {
-      if (auto chiptune = Create(data, std::move(properties)))
+      PropertiesHelper props(*properties);
+      if (auto chiptune = Create(data, props))
       {
-        return CreateHolder(std::move(chiptune));
+        props.SetSupportedParameters(ChipParameters::ALL);
+        return CreateHolder(std::move(chiptune), std::move(properties));
       }
       return {};
     }

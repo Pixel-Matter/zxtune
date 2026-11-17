@@ -98,14 +98,7 @@ namespace Module::ProTracker3
     {
       MutableCell& channel = Patterns.GetChannel();
       channel.SetEnabled(true);
-      if (Command* cmd = channel.FindCommand(Vortex::GLISS_NOTE))
-      {
-        cmd->Param3 = int_t(note);
-      }
-      else
-      {
-        channel.SetNote(note);
-      }
+      channel.SetNote(note);
     }
 
     void SetSample(uint_t sample) override
@@ -185,9 +178,8 @@ namespace Module::ProTracker3
   class Chiptune : public AYM::Chiptune
   {
   public:
-    Chiptune(ModuleData::Ptr data, Parameters::Accessor::Ptr properties)
+    explicit Chiptune(ModuleData::Ptr data)
       : Data(std::move(data))
-      , Properties(std::move(properties))
     {}
 
     Time::Microseconds GetFrameDuration() const override
@@ -195,105 +187,27 @@ namespace Module::ProTracker3
       return AYM::BASE_FRAME_DURATION;
     }
 
-    TrackModel::Ptr FindTrackModel() const override
+    FramedInformation GetInformation() const override
     {
-      return Data;
-    }
-
-    Module::StreamModel::Ptr FindStreamModel() const override
-    {
-      return {};
-    }
-
-    Parameters::Accessor::Ptr GetProperties() const override
-    {
-      return Properties;
+      return CreateTrackInfo(*Data);
     }
 
     AYM::DataIterator::Ptr CreateDataIterator(AYM::TrackParameters::Ptr trackParams) const override
     {
-      auto iterator = CreateTrackStateIterator(GetFrameDuration(), Data);
-      auto renderer = CreateDataRenderer(Data);
-      return AYM::CreateDataIterator(std::move(trackParams), std::move(iterator), std::move(renderer));
+      return Vortex::CreateDataIterator(Data, std::move(trackParams));
     }
 
   private:
     const ModuleData::Ptr Data;
-    const Parameters::Accessor::Ptr Properties;
   };
 
   namespace TS
   {
-    class DataIterator : public TurboSound::DataIterator
-    {
-    public:
-      DataIterator(uint_t base, AYM::TrackParameters::Ptr trackParams, Iterator::Ptr iterator,
-                   AYM::DataRenderer::Ptr first, AYM::DataRenderer::Ptr second)
-        : Base(base)
-        , Params(std::move(trackParams))
-        , Delegate(std::move(iterator))
-        , First(std::move(first))
-        , Second(std::move(second))
-      {}
-
-      void Reset() override
-      {
-        Params.Reset();
-        Delegate->Reset();
-        First->Reset();
-        Second->Reset();
-      }
-
-      void NextFrame() override
-      {
-        Delegate->NextFrame();
-      }
-
-      Module::State GetState() const override
-      {
-        return Delegate->GetState();
-      }
-
-      Devices::TurboSound::Registers GetData() const override
-      {
-        SynchronizeParameters();
-        auto state = Delegate->GetState();
-        auto firstReg = RenderFrom(*state.Track, *First);
-        state.Track->Pattern = Base - 1 - state.Track->Pattern;
-        return {{std::move(firstReg), RenderFrom(*state.Track, *Second)}};
-      }
-
-    private:
-      Devices::AYM::Registers RenderFrom(const TrackState& state, AYM::DataRenderer& renderer) const
-      {
-        AYM::TrackBuilder builder(Table);
-        renderer.SynthesizeData(state, builder);
-        return builder.GetResult();
-      }
-
-      void SynchronizeParameters() const
-      {
-        if (Params.IsChanged())
-        {
-          Params->FreqTable(Table);
-        }
-      }
-
-    private:
-      const uint_t Base;
-      Parameters::TrackingHelper<AYM::TrackParameters> Params;
-      const Iterator::Ptr Delegate;
-      const AYM::DataRenderer::Ptr First;
-      const AYM::DataRenderer::Ptr Second;
-      mutable AYM::FrequencyTable Table;
-    };
-
     class Chiptune : public TurboSound::Chiptune
     {
     public:
-      Chiptune(ModuleData::Ptr data, Parameters::Accessor::Ptr properties)
+      explicit Chiptune(ModuleData::Ptr data)
         : Data(std::move(data))
-        , Properties(std::move(properties))
       {}
 
       Time::Microseconds GetFrameDuration() const override
@@ -301,32 +215,19 @@ namespace Module::ProTracker3
         return AYM::BASE_FRAME_DURATION;
       }
 
-      TrackModel::Ptr FindTrackModel() const override
+      FramedInformation GetInformation() const override
       {
-        return Data;
-      }
-
-      Module::StreamModel::Ptr FindStreamModel() const override
-      {
-        return {};
-      }
-
-      Parameters::Accessor::Ptr GetProperties() const override
-      {
-        return Properties;
+        return CreateTrackInfo(*Data);
       }
 
       TurboSound::DataIterator::Ptr CreateDataIterator(AYM::TrackParameters::Ptr first,
                                                        AYM::TrackParameters::Ptr /*second*/) const override
       {
-        auto iterator = CreateTrackStateIterator(GetFrameDuration(), Data);
-        return MakePtr<DataIterator>(*Data->TurboPatternsOffset, std::move(first), std::move(iterator),
-                                     Vortex::CreateDataRenderer(Data), Vortex::CreateDataRenderer(Data));
+        return Vortex::CreateTurboSoundDataIterator(Data, std::move(first));
       }
 
     private:
       const ModuleData::Ptr Data;
-      const Parameters::Accessor::Ptr Properties;
     };
   }  // namespace TS
 
@@ -351,13 +252,13 @@ namespace Module::ProTracker3
           // TurboSound modules
           props.SetChipsCount(Devices::TurboSound::CHIPS);
           props.SetComment(TURBOSOUND_COMMENT);
-          auto chiptune = MakePtr<TS::Chiptune>(std::move(modData), std::move(properties));
-          return TurboSound::CreateHolder(std::move(chiptune));
+          auto chiptune = MakePtr<TS::Chiptune>(std::move(modData));
+          return TurboSound::CreateHolder(std::move(chiptune), std::move(properties));
         }
         else
         {
-          auto chiptune = MakePtr<Chiptune>(std::move(modData), std::move(properties));
-          return AYM::CreateHolder(std::move(chiptune));
+          auto chiptune = MakePtr<Chiptune>(std::move(modData));
+          return AYM::CreateHolder(std::move(chiptune), std::move(properties));
         }
       }
       return {};

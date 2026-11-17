@@ -12,12 +12,11 @@
 #include "sound/backends/dsound.h"
 #include "sound/backends/gates/dsound_api.h"
 #include "sound/backends/l10n.h"
+#include "sound/backends/parameters.h"
 #include "sound/backends/storage.h"
 #include "sound/backends/volume_control.h"
 
 #include "debug/log.h"
-#include "math/numeric.h"
-#include "sound/backends_parameters.h"
 #include "sound/render_params.h"
 #include "strings/encoding.h"
 
@@ -33,9 +32,6 @@ namespace Sound::DirectSound
   const Debug::Stream Dbg("Sound::Backend::DirectSound");
 
   const uint_t CAPABILITIES = CAP_TYPE_SYSTEM | CAP_FEAT_HWVOLUME;
-
-  const uint_t LATENCY_MIN = 20;
-  const uint_t LATENCY_MAX = 10000;
 
   HWND GetWindowHandle()
   {
@@ -372,18 +368,18 @@ namespace Sound::DirectSound
 
     String GetDevice() const
     {
-      return Parameters::GetString(Accessor, Parameters::ZXTune::Sound::Backends::DirectSound::DEVICE);
+      return Parameters::Get<Parameters::ZXTune::Sound::Backends::DirectSound::Device>(Accessor);
     }
 
-    uint_t GetLatency() const
+    Time::Milliseconds GetLatency() const
     {
       using namespace Parameters::ZXTune::Sound::Backends::DirectSound;
-      const auto latency = Parameters::GetInteger<uint_t>(Accessor, LATENCY, LATENCY_DEFAULT);
-      if (!Math::InRange(latency, LATENCY_MIN, LATENCY_MAX))
+      const auto latency = Parameters::Get<Latency>(Accessor);
+      if (!Parameters::Validate<Latency>(latency))
       {
         throw MakeFormattedError(THIS_LINE,
                                  translate("DirectSound backend error: latency ({0}) is out of range ({1}..{2})."),
-                                 latency, LATENCY_MIN, LATENCY_MAX);
+                                 latency.Get(), Latency::Min.Get(), Latency::Max.Get());
       }
       return latency;
     }
@@ -398,7 +394,6 @@ namespace Sound::DirectSound
     BackendWorker(Api::Ptr api, Parameters::Accessor::Ptr params)
       : DsApi(std::move(api))
       , BackendParams(std::move(params))
-      , RenderingParameters(RenderParameters::Create(BackendParams))
     {}
 
     void Startup() override
@@ -480,8 +475,9 @@ namespace Sound::DirectSound
       const String device = params.GetDevice();
       DSObjects res;
       res.Device = OpenDevice(*DsApi, device);
-      const uint_t latency = params.GetLatency();
-      const DirectSoundBufferPtr buffer = CreateSecondaryBuffer(*res.Device, RenderingParameters->SoundFreq(), latency);
+      const uint_t latency = params.GetLatency().Get();
+      const DirectSoundBufferPtr buffer =
+          CreateSecondaryBuffer(*res.Device, GetSoundFrequency(*BackendParams), latency);
       res.Stream = MakePtr<StreamBuffer>(buffer);
       const DirectSoundBufferPtr primary = CreatePrimaryBuffer(*res.Device);
       res.Volume = MakePtr<VolumeControl>(res.Device, primary);
@@ -491,7 +487,6 @@ namespace Sound::DirectSound
   private:
     const Api::Ptr DsApi;
     const Parameters::Accessor::Ptr BackendParams;
-    const RenderParameters::Ptr RenderingParameters;
     DSObjects Objects;
   };
 

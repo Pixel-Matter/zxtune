@@ -11,6 +11,7 @@
 #pragma once
 
 #include "module/players/dac/dac_chiptune.h"
+#include "module/players/parameters.h"
 #include "module/players/tracking.h"
 
 #include "module/holder.h"
@@ -93,23 +94,39 @@ namespace Module::DAC
     Devices::DAC::Channels Data;
   };
 
-  class DataRenderer
+  template<class RendererType>
+  class Synth
   {
   public:
-    using Ptr = std::unique_ptr<DataRenderer>;
+    using Data = Devices::DAC::Channels;
 
-    virtual ~DataRenderer() = default;
+    template<class ModelType>
+    explicit Synth(const ModelType& model)
+      : Renderer(model)
+    {}
 
-    virtual void SynthesizeData(const TrackState& state, TrackBuilder& track) = 0;
-    virtual void Reset() = 0;
+    void Reset()
+    {
+      Renderer.Reset();
+    }
+
+    Devices::DAC::Channels Synthesize(const TrackState& state)
+    {
+      TrackBuilder builder;
+      Renderer.SynthesizeData(state, builder);
+      Devices::DAC::Channels result;
+      builder.GetResult(result);
+      return result;
+    }
+
+  private:
+    RendererType Renderer;
   };
 
-  DataIterator::Ptr CreateDataIterator(Iterator::Ptr iterator, DataRenderer::Ptr renderer);
-
-  Renderer::Ptr CreateRenderer(Time::Microseconds frameDuration, DataIterator::Ptr iterator,
+  Renderer::Ptr CreateRenderer(FrameDurationParameter frameDuration, DataIterator::Ptr iterator,
                                Devices::DAC::Chip::Ptr device);
 
-  Holder::Ptr CreateHolder(Chiptune::Ptr chiptune);
+  Holder::Ptr CreateHolder(Chiptune::Ptr chiptune, Parameters::Accessor::Ptr properties);
 
   Devices::DAC::Chip::Ptr CreateChip(uint_t channels, uint_t samplerate, Parameters::Accessor::Ptr params);
 }  // namespace Module::DAC

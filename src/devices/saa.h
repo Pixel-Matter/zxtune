@@ -83,8 +83,8 @@ namespace Devices::SAA
     using Ptr = std::unique_ptr<Device>;
     virtual ~Device() = default;
 
-    /// render single data chunk
-    virtual void RenderData(const DataChunk& src) = 0;
+    /// render state changes
+    virtual void RenderData(DataChunk src) = 0;
 
     /// reset internal state to initial
     virtual void Reset() = 0;
@@ -114,7 +114,7 @@ namespace Devices::SAA
     virtual ~ChipParameters() = default;
 
     virtual uint_t Version() const = 0;
-    virtual uint64_t ClockFreq() const = 0;
+    virtual uint_t ClockFreq() const = 0;
     virtual uint_t SoundFreq() const = 0;
     virtual InterpolationType Interpolation() const = 0;
     virtual uint_t MuteMask() const = 0;

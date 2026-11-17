@@ -10,6 +10,7 @@
  *
  **/
 
+#include "devices/details/chunks_cache.h"
 #include "devices/details/renderers.h"
 #include "devices/saa/device.h"
 
@@ -132,7 +133,7 @@ namespace Devices::SAA
       : Delegate(delegate)
     {}
 
-    void SetClockFrequency(uint64_t clockFreq)
+    void SetClockFrequency(uint_t clockFreq)
     {
       Filter.SetParameters(clockFreq / FREQ_DIVIDER, Details::SOUND_CUTOFF_FREQUENCY);
     }
@@ -170,7 +171,7 @@ namespace Devices::SAA
       : Parent(clock, psg)
     {}
 
-    void SetClockFrequency(uint64_t clockFreq)
+    void SetClockFrequency(uint_t clockFreq)
     {
       Parent::PSG.SetClockFrequency(clockFreq);
     }
@@ -194,7 +195,7 @@ namespace Devices::SAA
       Current = nullptr;
     }
 
-    void SetFrequency(uint64_t clockFreq, uint_t soundFreq)
+    void SetFrequency(uint_t clockFreq, uint_t soundFreq)
     {
       if (ClockFreq != clockFreq || SoundFreq != soundFreq)
       {
@@ -221,13 +222,13 @@ namespace Devices::SAA
       }
     }
 
-    Sound::Chunk Render(Stamp tillTime, uint_t samples)
+    void Render(Stamp tillTime, Sound::Chunk* target)
     {
-      return Current->Render(tillTime, samples);
+      Current->Render(tillTime, target);
     }
 
   private:
-    uint64_t ClockFreq = 0;
+    uint_t ClockFreq = 0;
     uint_t SoundFreq = 0;
     ClockSource& Clock;
     LQRenderer LQ;
@@ -246,11 +247,9 @@ namespace Devices::SAA
       RegularSAAChip::Reset();
     }
 
-    void RenderData(const DataChunk& src) override
+    void RenderData(DataChunk src) override
     {
-      // for simplicity
-      Require(!Clock.HasSamplesBefore(src.TimeStamp));
-      PSG.SetNewData(src.Data);
+      Chunks.Add(std::move(src));
     }
 
     void Reset() override
@@ -258,15 +257,22 @@ namespace Devices::SAA
       Params.Reset();
       PSG.Reset();
       Renderers.Reset();
+      Chunks = {};
       SynchronizeParameters();
     }
 
-    Sound::Chunk RenderTill(Stamp stamp) override
+    Sound::Chunk RenderTill(Stamp till) override
     {
-      const uint_t samples = Clock.SamplesTill(stamp);
-      Require(samples);
-      auto result = Renderers.Render(stamp, samples);
       SynchronizeParameters();
+      for (const auto& event : Chunks.ConsumeBefore(till))
+      {
+        // for simplicity
+        Require(!Clock.SamplesTill(event.TimeStamp));
+        PSG.SetNewData(event.Data);
+      }
+      Sound::Chunk result;
+      Renderers.Render(till, &result);
+      Require(!result.empty());
       return result;
     }
 
@@ -276,7 +282,7 @@ namespace Devices::SAA
       if (Params.IsChanged())
       {
         PSG.SetMuteMask(Params->MuteMask());
-        const uint64_t clock = Params->ClockFreq();
+        const uint_t clock = Params->ClockFreq();
         const uint_t sndFreq = Params->SoundFreq();
         Renderers.SetFrequency(clock, sndFreq);
         Renderers.SetInterpolation(Params->Interpolation());
@@ -288,6 +294,7 @@ namespace Devices::SAA
     SAARenderer PSG;
     ClockSource Clock;
     RenderersSet Renderers;
+    Details::ChunksCache<DataChunk, Stamp> Chunks;
   };
 
   Chip::Ptr CreateChip(ChipParameters::Ptr params)

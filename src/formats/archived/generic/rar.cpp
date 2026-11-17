@@ -110,7 +110,8 @@ namespace Formats::Archived
     {
       for (;;)
       {
-        if (const auto size = GetBlockSize(stream); size <= stream.GetRestSize())
+        // Zero-sized block does not advance the stream and causes an infinite loop
+        if (const auto size = GetBlockSize(stream); 0 != size && size <= stream.GetRestSize())
         {
           cb(stream.ReadData(size));
         }
@@ -292,7 +293,15 @@ namespace Formats::Archived
             Dbg("Stored file mismatch");
             return {};
           }
-          return Unstore(payload);
+          try
+          {
+            return Unstore(payload);
+          }
+          catch (const std::exception&)
+          {
+            Dbg("Failed to unstore file");
+            return {};
+          }
         }
         // Old format starts from 52 45 7e 5e
         const bool oldFormat = false;

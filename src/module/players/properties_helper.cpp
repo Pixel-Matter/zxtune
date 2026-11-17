@@ -10,9 +10,12 @@
 
 #include "module/players/properties_helper.h"
 
+#include "core/parameters.h"
 #include "formats/chiptune/container.h"
 #include "module/attributes.h"
-#include "sound/sound_parameters.h"
+#include "parameters/identifiers_set.h"
+#include "parameters/modifier.h"
+#include "sound/parameters.h"
 #include "strings/join.h"
 #include "strings/trim.h"
 
@@ -153,28 +156,38 @@ namespace Module
     SetNonEmptyProperty(ATTR_CHANNELS_NAMES, result);
   }
 
+  void PropertiesHelper::SetSupportedParameters(const Parameters::IdentifiersSet& ids)
+  {
+    SetNonEmptyProperty(ATTR_SUPPORTED_PARAMETERS, ids.ToString());
+  }
+
   void PropertiesHelper::SetFadein(Time::Milliseconds fadein)
   {
     using namespace Parameters::ZXTune::Sound;
-    Delegate.SetValue(FADEIN, FADEIN_PRECISION * fadein.Get() / fadein.PER_SECOND);
+    Parameters::Set<FadeIn>(Delegate, fadein.CastTo<Time::Second>());
   }
 
   void PropertiesHelper::SetFadeout(Time::Milliseconds fadeout)
   {
     using namespace Parameters::ZXTune::Sound;
-    Delegate.SetValue(FADEOUT, FADEOUT_PRECISION * fadeout.Get() / fadeout.PER_SECOND);
+    Parameters::Set<FadeOut>(Delegate, fadeout.CastTo<Time::Second>());
   }
 
   void PropertiesHelper::SetGain(float gain)
   {
     using namespace Parameters::ZXTune::Sound;
-    if (gain > 1.f / GAIN_PRECISION)
+    if (gain > 1.f / Gain::Precision)
     {
-      Delegate.SetValue(GAIN, GAIN_PRECISION * gain);
+      Parameters::Set<Gain>(Delegate, Gain::Precision * gain);
     }
     else
     {
-      Delegate.SetValue(GAIN, 1);
+      Parameters::Set<Gain>(Delegate, 1);
     }
+  }
+
+  void PropertiesHelper::SetFrameDuration(Time::Microseconds frameDuration)
+  {
+    Parameters::Set<Parameters::ZXTune::Core::FrameDuration>(Delegate, frameDuration);
   }
 }  // namespace Module

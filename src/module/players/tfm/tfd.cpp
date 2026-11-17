@@ -30,14 +30,9 @@ namespace Module::TFD
 
     ModuleData() = default;
 
-    uint_t GetTotalFrames() const override
+    FramedInformation GetInformation() const override
     {
-      return static_cast<uint_t>(Offsets.size() - 1);
-    }
-
-    uint_t GetLoopFrame() const override
-    {
-      return LoopPos;
+      return {.Total = static_cast<uint_t>(Offsets.size() - 1), .Loop = LoopPos};
     }
 
     void Get(uint_t frameNum, Devices::TFM::Registers& res) const override
@@ -125,19 +120,18 @@ namespace Module::TFD
 
 namespace Module::TFM
 {
-  Chiptune::Ptr CreateTFDChiptune(const Binary::Container& rawData, Parameters::Container::Ptr properties)
+  Chiptune::Ptr CreateTFDChiptune(const Binary::Container& rawData, PropertiesHelper& props)
   {
-    PropertiesHelper props(*properties);
     TFD::DataBuilder dataBuilder(props);
     if (const auto container = Formats::Chiptune::TFD::Parse(rawData, dataBuilder))
     {
       auto data = dataBuilder.CaptureResult();
-      if (data->GetTotalFrames())
+      if (data->GetInformation().Total)
       {
         props.SetSource(*container);
         props.SetPlatform(Platforms::ZX_SPECTRUM);
         props.SetChannels("FM"sv, Devices::TFM::VOICES);
-        return CreateStreamedChiptune(BASE_FRAME_DURATION, std::move(data), std::move(properties));
+        return CreateStreamedChiptune(std::move(data));
       }
     }
     return {};

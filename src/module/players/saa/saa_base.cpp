@@ -10,6 +10,8 @@
 
 #include "module/players/saa/saa_base.h"
 
+#include "module/players/parameters.h"
+
 #include "math/numeric.h"
 
 #include "make_ptr.h"
@@ -18,72 +20,25 @@
 
 namespace Module
 {
-  class SAADataIterator : public SAA::DataIterator
-  {
-  public:
-    SAADataIterator(Iterator::Ptr delegate, SAA::DataRenderer::Ptr renderer)
-      : Delegate(std::move(delegate))
-      , Render(std::move(renderer))
-    {
-      FillCurrentData();
-    }
-
-    void Reset() override
-    {
-      Delegate->Reset();
-      Render->Reset();
-      FillCurrentData();
-    }
-
-    void NextFrame() override
-    {
-      Delegate->NextFrame();
-      FillCurrentData();
-    }
-
-    Module::State GetState() const override
-    {
-      return Delegate->GetState();
-    }
-
-    Devices::SAA::Registers GetData() const override
-    {
-      return CurrentData;
-    }
-
-  private:
-    void FillCurrentData()
-    {
-      SAA::TrackBuilder builder;
-      Render->SynthesizeData(*Delegate->GetState().Track, builder);
-      builder.GetResult(CurrentData);
-    }
-
-  private:
-    const Iterator::Ptr Delegate;
-    const SAA::DataRenderer::Ptr Render;
-    Devices::SAA::Registers CurrentData;
-  };
-
   class SAARenderer : public Renderer
   {
   public:
-    SAARenderer(Time::Microseconds frameDuration, SAA::DataIterator::Ptr iterator, Devices::SAA::Chip::Ptr device)
-      : Iterator(std::move(iterator))
+    SAARenderer(FrameDurationParameter frameDuration, SAA::DataIterator::Ptr iterator, Devices::SAA::Chip::Ptr device)
+      : FrameDuration(std::move(frameDuration))
+      , Iterator(std::move(iterator))
       , Device(std::move(device))
-      , FrameDuration(frameDuration)
     {}
 
     State GetState() const override
     {
-      return Iterator->GetState();
+      return ToState(Iterator->GetState(), FrameDuration.Get());
     }
 
     Sound::Chunk Render() override
     {
       TransferChunk();
-      Iterator->NextFrame();
-      LastChunk.TimeStamp += FrameDuration;
+      FrameDuration.Synchronize();
+      LastChunk.TimeStamp += FrameDuration.Get<Devices::SAA::TimeUnit>();
       return Device->RenderTill(LastChunk.TimeStamp);
     }
 
@@ -96,61 +51,65 @@ namespace Module
 
     void SetPosition(Time::AtMillisecond request) override
     {
-      if (request < Iterator->GetState().At)
+      if (request < GetState().At)
       {
         Iterator->Reset();
         Device->Reset();
         LastChunk.TimeStamp = {};
       }
-      while (Iterator->GetState().At < request)
+      while (GetState().At < request)
       {
         TransferChunk();
-        Iterator->NextFrame();
       }
     }
 
   private:
     void TransferChunk()
     {
-      LastChunk.Data = Iterator->GetData();
+      LastChunk.Data = Iterator->Advance();
       Device->RenderData(LastChunk);
     }
 
   private:
+    FrameDurationParameter FrameDuration;
     const SAA::DataIterator::Ptr Iterator;
     const Devices::SAA::Chip::Ptr Device;
-    const Time::Duration<Devices::SAA::TimeUnit> FrameDuration;
     Devices::SAA::DataChunk LastChunk;
   };
 
   class SAAHolder : public Holder
   {
   public:
-    explicit SAAHolder(SAA::Chiptune::Ptr chiptune)
+    SAAHolder(SAA::Chiptune::Ptr chiptune, Parameters::Accessor::Ptr properties, Time::Microseconds frameDuration)
       : Tune(std::move(chiptune))
+      , Properties(std::move(properties))
+      , FrameDuration(frameDuration)
     {}
 
     Information GetModuleInformation() const override
     {
-      return CreateTrackInfo(Tune->GetFrameDuration(), *Tune->GetTrackModel());
+      return ToInformation(CreateTrackInfo(*Tune->GetTrackModel()), FrameDuration);
     }
 
     Parameters::Accessor::Ptr GetModuleProperties() const override
     {
-      return Tune->GetProperties();
+      return Properties;
     }
 
     Renderer::Ptr CreateRenderer(uint_t samplerate, Parameters::Accessor::Ptr params) const override
     {
-      auto chipParams = SAA::CreateChipParameters(samplerate, std::move(params));
+      auto rendererParams = params;
+      auto chipParams = SAA::ChipParameters::Create(samplerate, std::move(params));
       auto chip = Devices::SAA::CreateChip(std::move(chipParams));
       auto iterator = Tune->CreateDataIterator();
-      return MakePtr<SAARenderer>(Tune->GetFrameDuration() /*TODO: playback speed*/, std::move(iterator),
-                                  std::move(chip));
+      return MakePtr<SAARenderer>(FrameDurationParameter(std::move(rendererParams), SAA::BASE_FRAME_DURATION),
+                                  std::move(iterator), std::move(chip));
     }
 
   private:
     const SAA::Chiptune::Ptr Tune;
+    const Parameters::Accessor::Ptr Properties;
+    const Time::Microseconds FrameDuration;
   };
 }  // namespace Module
 
@@ -203,13 +162,9 @@ namespace Module::SAA
     AddRegister(Devices::SAA::Registers::NOISEMIXER, 1 << Channel);
   }
 
-  DataIterator::Ptr CreateDataIterator(Iterator::Ptr iterator, DataRenderer::Ptr renderer)
+  Holder::Ptr CreateHolder(Chiptune::Ptr chiptune, Parameters::Accessor::Ptr properties)
   {
-    return MakePtr<SAADataIterator>(std::move(iterator), std::move(renderer));
-  }
-
-  Holder::Ptr CreateHolder(Chiptune::Ptr chiptune)
-  {
-    return MakePtr<SAAHolder>(std::move(chiptune));
+    const FrameDurationParameter frameDuration(properties, SAA::BASE_FRAME_DURATION);
+    return MakePtr<SAAHolder>(std::move(chiptune), std::move(properties), frameDuration.Get());
   }
 }  // namespace Module::SAA

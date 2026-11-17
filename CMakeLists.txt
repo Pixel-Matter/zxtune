@@ -59,6 +59,8 @@ add_library(zxtune_aym STATIC
     src/module/players/aym/ts.cpp
     src/module/players/aym/turbosound.cpp
     src/module/players/aym/vortex.cpp
+    src/module/players/iterator.cpp
+    src/module/players/parameters.cpp
     src/module/players/properties_helper.cpp
     src/module/players/properties_meta.cpp
     src/module/players/streaming.cpp

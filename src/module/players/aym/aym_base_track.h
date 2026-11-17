@@ -13,7 +13,7 @@
 #include "module/players/aym/aym_chiptune.h"
 #include "module/players/tracking.h"
 
-#include "module/renderer.h"
+#include "parameters/tracking_helper.h"
 
 namespace Module::AYM
 {
@@ -72,19 +72,40 @@ namespace Module::AYM
     Devices::AYM::Registers Data;
   };
 
-  class DataRenderer
+  template<class RendererType>
+  class Synth
   {
   public:
-    using Ptr = std::unique_ptr<DataRenderer>;
+    using Data = Devices::AYM::Registers;
 
-    virtual ~DataRenderer() = default;
+    template<class ModelType>
+    Synth(const ModelType& model, AYM::TrackParameters::Ptr params)
+      : Renderer(model)
+      , Params(std::move(params))
+    {}
 
-    virtual void SynthesizeData(const TrackState& state, TrackBuilder& track) = 0;
-    virtual void Reset() = 0;
+    void Reset()
+    {
+      Renderer.Reset();
+      Params.Reset();
+    }
+
+    Devices::AYM::Registers Synthesize(const TrackState& state)
+    {
+      if (Params.IsChanged())
+      {
+        Params->FreqTable(Table);
+      }
+      AYM::TrackBuilder builder(Table);
+      Renderer.SynthesizeData(state, builder);
+      return builder.GetResult();
+    }
+
+  private:
+    RendererType Renderer;
+    Parameters::TrackingHelper<AYM::TrackParameters> Params;
+    FrequencyTable Table;
   };
-
-  DataIterator::Ptr CreateDataIterator(AYM::TrackParameters::Ptr trackParams, Iterator::Ptr iterator,
-                                       DataRenderer::Ptr renderer);
 
   template<class OrderListType, class SampleType, class OrnamentType>
   class ModuleData : public TrackModel
@@ -122,13 +143,14 @@ namespace Module::AYM
     SparsedObjectsStorage<OrnamentType> Ornaments;
   };
 
-  template<class DataPtr, class DataRenderer>
+  template<class RendererType, class ModelPtr>
   class TrackingChiptune : public Chiptune
   {
+    using ModelType = std::remove_const_t<typename ModelPtr::element_type>;
+
   public:
-    TrackingChiptune(DataPtr data, Parameters::Accessor::Ptr properties)
-      : Data(std::move(data))
-      , Properties(std::move(properties))
+    explicit TrackingChiptune(ModelPtr model)
+      : Model(std::move(model))
     {}
 
     Time::Microseconds GetFrameDuration() const override
@@ -136,36 +158,23 @@ namespace Module::AYM
       return BASE_FRAME_DURATION;
     }
 
-    TrackModel::Ptr FindTrackModel() const override
+    FramedInformation GetInformation() const override
     {
-      return Data;
+      return CreateTrackInfo(*Model);
     }
 
-    Module::StreamModel::Ptr FindStreamModel() const override
+    DataIterator::Ptr CreateDataIterator(AYM::TrackParameters::Ptr trackParams) const override
     {
-      return {};
-    }
-
-    Parameters::Accessor::Ptr GetProperties() const override
-    {
-      return Properties;
-    }
-
-    AYM::DataIterator::Ptr CreateDataIterator(AYM::TrackParameters::Ptr trackParams) const override
-    {
-      auto iterator = CreateTrackStateIterator(GetFrameDuration(), Data);
-      auto renderer = MakePtr<DataRenderer>(Data);
-      return AYM::CreateDataIterator(std::move(trackParams), std::move(iterator), std::move(renderer));
+      return MakePtr<TrackIterator<ModelType, ModelTrackCursor, Synth<RendererType>>>(Model, std::move(trackParams));
     }
 
   private:
-    const DataPtr Data;
-    const Parameters::Accessor::Ptr Properties;
+    const ModelPtr Model;
   };
 
-  template<class DataRenderer, class DataPtr>
-  Chiptune::Ptr CreateTrackingChiptune(DataPtr data, Parameters::Accessor::Ptr properties)
+  template<class RendererType, class ModelPtr>
+  Chiptune::Ptr CreateTrackingChiptune(ModelPtr model)
   {
-    return MakePtr<TrackingChiptune<DataPtr, DataRenderer>>(std::move(data), std::move(properties));
+    return MakePtr<TrackingChiptune<RendererType, ModelPtr>>(std::move(model));
   }
 }  // namespace Module::AYM

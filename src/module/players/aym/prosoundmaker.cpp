@@ -221,26 +221,26 @@ namespace Module::ProSoundMaker
     int_t Slide = 0;
   };
 
-  class DataRenderer : public AYM::DataRenderer
+  class DataRenderer
   {
   public:
-    explicit DataRenderer(ModuleData::Ptr data)
-      : Data(std::move(data))
+    explicit DataRenderer(const ModuleData& data)
+      : Data(data)
     {
       Reset();
     }
 
-    void Reset() override
+    void Reset()
     {
       for (auto& state : PlayerState)
       {
         state = ChannelState();
-        state.Smp.Current = &Data->Samples.Get(0);
-        state.Orn.Current = &Data->Ornaments.Get(0);
+        state.Smp.Current = &Data.Samples.Get(0);
+        state.Orn.Current = &Data.Ornaments.Get(0);
       }
     }
 
-    void SynthesizeData(const TrackState& state, AYM::TrackBuilder& track) override
+    void SynthesizeData(const TrackState& state, AYM::TrackBuilder& track)
     {
       if (0 == state.Quirk)
       {
@@ -252,9 +252,9 @@ namespace Module::ProSoundMaker
   private:
     void GetNewLineState(const TrackState& state, AYM::TrackBuilder& track)
     {
-      if (const auto* const line = Data->GetLine(state))
+      if (const auto* const line = Data.GetLine(state))
       {
-        const auto transposition = Data->Order->GetTransposition(state.Position);
+        const auto transposition = Data.Order->GetTransposition(state.Position);
         const auto newPattern = 0 == state.Line;
         line->ForEachChannel([&](auto chan, const auto& src) {
           auto& dst = PlayerState[chan];
@@ -276,11 +276,11 @@ namespace Module::ProSoundMaker
       }
       if (const uint_t* sample = src.GetSample())
       {
-        dst.Smp.Current = &Data->Samples.Get(*sample);
+        dst.Smp.Current = &Data.Samples.Get(*sample);
       }
       if (const uint_t* ornament = src.GetOrnament())
       {
-        dst.Orn.Current = &Data->Ornaments.Get(*ornament);
+        dst.Orn.Current = &Data.Ornaments.Get(*ornament);
         dst.Orn.Position = 0;
         dst.Orn.Finished = dst.Orn.KeepFinished = false;
         dst.Envelope.Disable();
@@ -438,21 +438,20 @@ namespace Module::ProSoundMaker
     }
 
   private:
-    const ModuleData::Ptr Data;
+    const ModuleData& Data;
     std::array<ChannelState, AYM::TRACK_CHANNELS> PlayerState;
   };
 }  // namespace Module::ProSoundMaker
 
 namespace Module::AYM
 {
-  Chiptune::Ptr CreateProSoundMakerChiptune(const Binary::Container& rawData, Parameters::Container::Ptr properties)
+  Chiptune::Ptr CreateProSoundMakerChiptune(const Binary::Container& rawData, PropertiesHelper& props)
   {
-    PropertiesHelper props(*properties);
     ProSoundMaker::DataBuilder dataBuilder(props);
     if (const auto container = Formats::Chiptune::ProSoundMaker::ParseCompiled(rawData, dataBuilder))
     {
       props.SetSource(*container);
-      return CreateTrackingChiptune<ProSoundMaker::DataRenderer>(dataBuilder.CaptureResult(), properties);
+      return CreateTrackingChiptune<ProSoundMaker::DataRenderer>(dataBuilder.CaptureResult());
     }
     return {};
   }

@@ -11,12 +11,12 @@
 #include "sound/backends/backend_impl.h"
 #include "sound/backends/l10n.h"
 #include "sound/backends/oss.h"
+#include "sound/backends/parameters.h"
 #include "sound/backends/storage.h"
 
 #include "debug/log.h"
-#include "sound/backends_parameters.h"
+#include "sound/parameters.h"
 #include "sound/render_params.h"
-#include "sound/sound_parameters.h"
 
 #include "byteorder.h"
 #include "error_tools.h"
@@ -239,13 +239,13 @@ namespace Sound::Oss
     String GetDeviceName() const
     {
       using namespace Parameters::ZXTune::Sound::Backends::Oss;
-      return Parameters::GetString(Accessor, DEVICE, DEVICE_DEFAULT);
+      return Parameters::Get<Device>(Accessor);
     }
 
     String GetMixerName() const
     {
       using namespace Parameters::ZXTune::Sound::Backends::Oss;
-      return Parameters::GetString(Accessor, MIXER, MIXER_DEFAULT);
+      return Parameters::Get<Mixer>(Accessor);
     }
 
   private:
@@ -319,7 +319,6 @@ namespace Sound::Oss
   private:
     void SetupDevices(AutoDescriptor& device, AutoDescriptor& mixer, int& fmt) const
     {
-      const RenderParameters::Ptr sound = RenderParameters::Create(Params);
       const BackendParameters backend(*Params);
 
       AutoDescriptor tmpMixer(backend.GetMixerName(), O_RDWR);
@@ -341,7 +340,7 @@ namespace Sound::Oss
       Dbg("Setting channels to {}", tmp);
       tmpDevice.Ioctl(SNDCTL_DSP_CHANNELS, &tmp, THIS_LINE);
 
-      tmp = sound->SoundFreq();
+      tmp = GetSoundFrequency(*Params);
       Dbg("Setting frequency to {}", tmp);
       tmpDevice.Ioctl(SNDCTL_DSP_SPEED, &tmp, THIS_LINE);
 

@@ -20,15 +20,7 @@ namespace Module::TurboSound
 {
   const uint_t TRACK_CHANNELS = AYM::TRACK_CHANNELS * Devices::TurboSound::CHIPS;
 
-  class DataIterator : public Iterator
-  {
-  public:
-    using Ptr = std::unique_ptr<DataIterator>;
-
-    virtual State GetState() const = 0;
-
-    virtual Devices::TurboSound::Registers GetData() const = 0;
-  };
+  using DataIterator = Iterator<Devices::TurboSound::Registers>;
 
   class Chiptune
   {
@@ -38,16 +30,16 @@ namespace Module::TurboSound
 
     virtual Time::Microseconds GetFrameDuration() const = 0;
 
-    // One of
-    virtual Module::TrackModel::Ptr FindTrackModel() const = 0;
-    virtual Module::StreamModel::Ptr FindStreamModel() const = 0;
+    virtual FramedInformation GetInformation() const = 0;
 
-    virtual Parameters::Accessor::Ptr GetProperties() const = 0;
     virtual DataIterator::Ptr CreateDataIterator(AYM::TrackParameters::Ptr first,
                                                  AYM::TrackParameters::Ptr second) const = 0;
   };
 
-  Chiptune::Ptr CreateChiptune(Parameters::Accessor::Ptr params, AYM::Chiptune::Ptr first, AYM::Chiptune::Ptr second);
+  Chiptune::Ptr CreateChiptune(AYM::Chiptune::Ptr first, AYM::Chiptune::Ptr second);
+
+  Parameters::Accessor::Ptr CreateModuleProperties(Parameters::Accessor::Ptr outer, Parameters::Accessor::Ptr first,
+                                                   Parameters::Accessor::Ptr second);
 
   // uzx: exposes the chiptune, like AYM::Holder::GetChiptune(), to read both chips' registers frame by frame.
   class Holder : public Module::Holder
@@ -56,5 +48,5 @@ namespace Module::TurboSound
     virtual const Chiptune& GetChiptune() const = 0;
   };
 
-  Holder::Ptr CreateHolder(Chiptune::Ptr chiptune);
+  Holder::Ptr CreateHolder(Chiptune::Ptr chiptune, Parameters::Accessor::Ptr properties);
 }  // namespace Module::TurboSound

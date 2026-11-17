@@ -16,8 +16,8 @@
 #include "parameters/merged_accessor.h"
 #include "parameters/tracking_helper.h"
 #include "sound/gainer.h"
+#include "sound/parameters.h"
 #include "sound/render_params.h"
-#include "sound/sound_parameters.h"
 
 #include "make_ptr.h"
 
@@ -28,13 +28,6 @@ namespace Module
   const Debug::Stream Debug("Core::Pipeline");
 
   using TimeUnit = Time::Millisecond;
-
-  Time::Duration<TimeUnit> GetDurationValue(const Parameters::Accessor& params, Parameters::Identifier name,
-                                            Parameters::IntType def, Parameters::IntType precision)
-  {
-    const auto value = Parameters::GetInteger(params, name, def);
-    return Time::Duration<TimeUnit>::FromRatio(value, precision);
-  }
 
   struct FadeInfo
   {
@@ -68,10 +61,8 @@ namespace Module
 
     static FadeInfo Create(Time::Milliseconds duration, const Parameters::Accessor& params)
     {
-      using namespace Parameters::ZXTune::Sound;
-      const auto fadeIn = GetDurationValue(params, FADEIN, FADEIN_DEFAULT, FADEIN_PRECISION);
-      const auto fadeOut = GetDurationValue(params, FADEOUT, FADEOUT_DEFAULT, FADEOUT_PRECISION);
-      return {fadeIn, fadeOut, duration};
+      return {Parameters::Get<Parameters::ZXTune::Sound::FadeIn>(params),
+              Parameters::Get<Parameters::ZXTune::Sound::FadeOut>(params), duration};
     }
   };
 
@@ -107,9 +98,9 @@ namespace Module
     static SilenceDetector Create(uint_t samplerate, const Parameters::Accessor& params)
     {
       using namespace Parameters::ZXTune::Sound;
-      const auto duration = GetDurationValue(params, SILENCE_LIMIT, SILENCE_LIMIT_DEFAULT, SILENCE_LIMIT_PRECISION);
+      const auto duration = Parameters::Get<SilenceLimit>(params);
       const auto limit = std::size_t(samplerate) * duration.Get() / duration.PER_SECOND;
-      Debug("Silence detection: {} ms ({} samples)", duration.Get(), limit);
+      Debug("Silence detection: {}s ({} samples)", duration.Get(), limit);
       return SilenceDetector(limit);
     }
 
@@ -177,8 +168,8 @@ namespace Module
       if (Params.IsChanged())
       {
         using namespace Parameters::ZXTune::Sound;
-        const auto val = Parameters::GetInteger(*Params, GAIN, GAIN_DEFAULT);
-        Preamp = Sound::Gain::Type(val, GAIN_PRECISION);
+        const auto val = Parameters::Get<Gain>(*Params);
+        Preamp = Sound::Gain::Type(val, Gain::Precision);
         Debug("Preamp: {}%", val);
         Loop = Sound::GetLoopParameters(*Params);
       }

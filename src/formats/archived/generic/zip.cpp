@@ -10,6 +10,8 @@
 
 #include "formats/archived/generic/zip.h"
 
+#include "formats/archived/generic/zip_implode.h"
+
 #include "binary/compression/zlib.h"
 #include "binary/container_base.h"
 #include "binary/format_factories.h"
@@ -19,6 +21,7 @@
 #include "strings/encoding.h"
 #include "strings/map.h"
 
+#include "error.h"
 #include "make_ptr.h"
 #include "string_view.h"
 
@@ -141,7 +144,8 @@ namespace Formats::Archived
       {
         return "encrypted";
       }
-      if (header.CompressionMethod != 0 && header.CompressionMethod != 8 && header.CompressionMethod != 9)
+      if (header.CompressionMethod != 0 && header.CompressionMethod != 6 && header.CompressionMethod != 8
+          && header.CompressionMethod != 9)
       {
         return "unsupported compression method";
       }
@@ -220,13 +224,14 @@ namespace Formats::Archived
       {
         Dbg("Depack '{}' {} -> {} (method {})", GetName(), Payload.Size(), UnpackedSize,
             uint_t(Header.CompressionMethod));
-        if (Header.CompressionMethod != 0)
+        switch (Header.CompressionMethod)
         {
-          return Decompress();
-        }
-        else
-        {
+        case 0:
           return Destore(data);
+        case 6:
+          return Deimplode(Payload, UnpackedSize, Header.Flags);
+        default:
+          return Decompress();
         }
       }
 
@@ -270,7 +275,19 @@ namespace Formats::Archived
 
       Binary::Container::Ptr GetData() const override
       {
-        return Ref.Decompress(*Data);
+        try
+        {
+          return Ref.Decompress(*Data);
+        }
+        catch (const Error& e)
+        {
+          Dbg("Failed to depack '{}': {}", Name, e.ToString());
+        }
+        catch (const std::exception&)
+        {
+          Dbg("Failed to depack '{}'", Name);
+        }
+        return {};
       }
 
     private:
@@ -321,10 +338,12 @@ namespace Formats::Archived
 
     const auto DESCRIPTION = "ZIP"sv;
     const auto FORMAT =
-        "504b0304"             // uint32_t Signature;
-        "?00"                  // uint16_t VersionToExtract;
-        "%0000xxx0 %0000x000"  // uint16_t Flags;
-        "%0000x00x 00"         // uint16_t CompressionMethod;
+        "504b0304"  // uint32_t Signature;
+        "?00"       // uint16_t VersionToExtract;
+        // Reserved bits (e.g. 0x8000 in local header) are set by some producers, but
+        // masked headers (bit 10) would hide CRC/sizes the parser relies on
+        "%0000xxx0 %xxxxx000"  // uint16_t Flags;
+        "%0000xxxx 00"         // uint16_t CompressionMethod;
         ""sv;
 
     class Decoder : public Archived::Decoder

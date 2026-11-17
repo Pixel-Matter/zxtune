@@ -23,10 +23,12 @@ It differs from upstream [vitamin-caig/zxtune](https://github.com/vitamin-caig/z
     lines after the header. `uzx/` reads the rest itself: a Turbo Sound tune saved as a module per
     chip, one after another, and `ChipFreq` / `IntFreq`, which zxtune ignores.
 
-## Updating to an upstream tag
+## Updating from upstream
+
+Merge a tag, or `upstream/develop` for fixes not tagged yet (`upstream` is vitamin-caig/zxtune):
 
 ```sh
-git fetch upstream tag rNNNN --no-tags
+git fetch upstream tag rNNNN --no-tags   # or: git fetch upstream develop
 git merge rNNNN              # files deleted here and changed upstream conflict: keep them deleted
 ./uzx-trim.sh                # drops what the merge brought back
 git commit

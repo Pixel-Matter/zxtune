@@ -74,47 +74,40 @@ namespace Module::DAC
     return SimpleDataBuilder::Create(props, Channels);
   }
 
-  DAC::Chiptune::Ptr CreateSimpleChiptune(SimpleModuleData::Ptr data, Parameters::Accessor::Ptr properties);
+  DAC::Chiptune::Ptr CreateSimpleChiptune(SimpleModuleData::Ptr data);
 
-  template<class DataPtr, class DataRenderer>
+  template<class RendererType, class ModelPtr>
   class TrackingChiptune : public Chiptune
   {
+    using ModelType = std::remove_const_t<typename ModelPtr::element_type>;
+
   public:
-    TrackingChiptune(DataPtr data, Parameters::Accessor::Ptr properties)
-      : Data(std::move(data))
-      , Properties(std::move(properties))
+    explicit TrackingChiptune(ModelPtr model)
+      : Model(std::move(model))
     {}
 
     TrackModel::Ptr GetTrackModel() const override
     {
-      return Data;
-    }
-
-    Parameters::Accessor::Ptr GetProperties() const override
-    {
-      return Properties;
+      return Model;
     }
 
     DataIterator::Ptr CreateDataIterator() const override
     {
-      auto iterator = CreateTrackStateIterator(GetFrameDuration(), Data);
-      auto renderer = MakePtr<DataRenderer>(Data);
-      return DAC::CreateDataIterator(std::move(iterator), std::move(renderer));
+      return MakePtr<TrackIterator<ModelType, ModelTrackCursor, Synth<RendererType>>>(Model);
     }
 
     void GetSamples(Devices::DAC::Chip& chip) const override
     {
-      Data->SetupSamples(chip);
+      Model->SetupSamples(chip);
     }
 
   private:
-    const DataPtr Data;
-    const Parameters::Accessor::Ptr Properties;
+    const ModelPtr Model;
   };
 
-  template<class DataRenderer, class DataPtr>
-  Chiptune::Ptr CreateTrackingChiptune(DataPtr data, Parameters::Accessor::Ptr properties)
+  template<class RendererType, class ModelPtr>
+  Chiptune::Ptr CreateTrackingChiptune(ModelPtr model)
   {
-    return MakePtr<TrackingChiptune<DataPtr, DataRenderer>>(std::move(data), std::move(properties));
+    return MakePtr<TrackingChiptune<RendererType, ModelPtr>>(std::move(model));
   }
 }  // namespace Module::DAC

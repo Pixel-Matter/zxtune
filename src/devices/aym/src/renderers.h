@@ -36,7 +36,7 @@ namespace Devices::AYM
       Clock.Reset();
     }
 
-    void SetFrequency(uint64_t clockFreq, uint_t soundFreq)
+    void SetFrequency(uint_t clockFreq, uint_t soundFreq)
     {
       if (ClockFreq != clockFreq || SoundFreq != soundFreq)
       {
@@ -63,18 +63,13 @@ namespace Devices::AYM
       }
     }
 
-    Sound::Chunk Render(Stamp tillTime, uint_t samples)
-    {
-      return Current->Render(tillTime, samples);
-    }
-
     void Render(Stamp tillTime, Sound::Chunk* target)
     {
       Current->Render(tillTime, target);
     }
 
   private:
-    uint64_t ClockFreq = 0;
+    uint_t ClockFreq = 0;
     uint_t SoundFreq = 0;
     ClockSource& Clock;
     Details::LQRenderer<Stamp, PSGType> LQ;

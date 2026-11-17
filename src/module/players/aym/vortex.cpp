@@ -10,7 +10,10 @@
 
 #include "module/players/aym/vortex.h"
 
+#include "module/players/aym/turbosound.h"
+
 #include "math/numeric.h"
+#include "parameters/tracking_helper.h"
 
 #include "make_ptr.h"
 
@@ -96,6 +99,9 @@ namespace Module::Vortex
     bool Enabled = false;
     bool Envelope = false;
     uint_t Note = 0;
+    // A note-gliss keeps the sounding note as the tone base until the target is reached,
+    // so the source note has to be kept separately from the target stored in the cell.
+    uint_t PrevNote = 0;
     uint_t SampleNum;
     uint_t PosInSample = 0;
     uint_t OrnamentNum;
@@ -131,21 +137,21 @@ namespace Module::Vortex
   };
 
   // simple player type
-  class DataRenderer : public AYM::DataRenderer
+  class DataRenderer
   {
   public:
-    explicit DataRenderer(ModuleData::Ptr data)
-      : Data(std::move(data))
-      , Version(Data->Version)
+    explicit DataRenderer(const ModuleData& data)
+      : Data(data)
+      , Version(Data.Version)
       , VolTable(Version <= 4 ? Vol33_34 : Vol35)
     {}
 
-    void Reset() override
+    void Reset()
     {
       PlayerState = State();
     }
 
-    void SynthesizeData(const TrackState& state, AYM::TrackBuilder& track) override
+    void SynthesizeData(const TrackState& state, AYM::TrackBuilder& track)
     {
       if (0 == state.Quirk)
       {
@@ -162,7 +168,7 @@ namespace Module::Vortex
         PlayerState.CommState.NoiseBase = 0;
       }
 
-      if (const auto* const line = Data->GetLine(state))
+      if (const auto* const line = Data.GetLine(state))
       {
         line->ForEachChannel(
             [&](auto chan, const auto& src) { GetNewChannelState(src, PlayerState.ChanState[chan], track); });
@@ -181,8 +187,26 @@ namespace Module::Vortex
         dst.VibrateCounter = 0;
         dst.Enabled = *enabled;
       }
-      if (const uint_t* note = src.GetNote())
+      const uint_t* note = src.GetNote();
+      if (note)
       {
+        // The cell note is the target of a note-gliss; keep the still-sounding note as the source
+        bool noteGliss = false;
+        for (const auto& cmd : src.GetCommands())
+        {
+          noteGliss = noteGliss || cmd.Type == GLISS_NOTE;
+        }
+        if (noteGliss)
+        {
+          if (LIMITER == dst.SlidingTargetNote)
+          {
+            dst.PrevNote = dst.Note;
+          }
+        }
+        else
+        {
+          dst.PrevNote = *note;
+        }
         dst.Note = *note;
       }
       if (const uint_t* sample = src.GetSample())
@@ -216,8 +240,8 @@ namespace Module::Vortex
           dst.VibrateCounter = 0;
           dst.ToneSlider.Period = dst.ToneSlider.Counter = cmd.Param1;
           dst.ToneSlider.Delta = Math::Absolute(cmd.Param2);
-          dst.SlidingTargetNote = cmd.Param3;
-          dst.SlidingDelta = track.GetSlidingDifference(dst.Note, dst.SlidingTargetNote);
+          dst.SlidingTargetNote = dst.Note;
+          dst.SlidingDelta = track.GetSlidingDifference(dst.PrevNote, dst.SlidingTargetNote);
           if (Version >= 6)
           {
             dst.ToneSlider.Value = prevSlide;
@@ -292,9 +316,9 @@ namespace Module::Vortex
         return;
       }
 
-      const Sample& curSample = Data->Samples.Get(dst.SampleNum);
+      const Sample& curSample = Data.Samples.Get(dst.SampleNum);
       const Sample::Line& curSampleLine = curSample.GetLine(dst.PosInSample);
-      const Ornament& curOrnament = Data->Ornaments.Get(dst.OrnamentNum);
+      const Ornament& curOrnament = Data.Ornaments.Get(dst.OrnamentNum);
 
       // calculate tone
       const int_t toneAddon = curSampleLine.ToneOffset + dst.ToneAccumulator;
@@ -302,7 +326,7 @@ namespace Module::Vortex
       {
         dst.ToneAccumulator = toneAddon;
       }
-      const int_t halfTones = int_t(dst.Note) + curOrnament.GetLine(dst.PosInOrnament);
+      const int_t halfTones = int_t(dst.PrevNote) + curOrnament.GetLine(dst.PosInOrnament);
       const int_t toneOffset = dst.ToneSlider.Value + toneAddon;
 
       // apply tone
@@ -345,7 +369,8 @@ namespace Module::Vortex
             || (dst.ToneSlider.Delta >= 0 && dst.ToneSlider.Value >= dst.SlidingDelta))
         {
           // slided to target note
-          dst.Note = dst.SlidingTargetNote;
+          dst.PrevNote = dst.Note = dst.SlidingTargetNote;
+          dst.SlidingTargetNote = LIMITER;
           dst.ToneSlider.Value = 0;
           dst.ToneSlider.Counter = 0;
         }
@@ -367,7 +392,7 @@ namespace Module::Vortex
     }
 
   private:
-    const ModuleData::Ptr Data;
+    const ModuleData& Data;
     const uint_t Version;
     const VolumeTable& VolTable;
     State PlayerState;
@@ -438,8 +463,76 @@ namespace Module::Vortex
     return TurboPatternsOffset ? FindPattern(*TurboPatternsOffset - 1 - pattern) : nullptr;
   }
 
-  AYM::DataRenderer::Ptr CreateDataRenderer(ModuleData::Ptr data)
+  class TurboSoundDataIterator : public TurboSound::DataIterator
   {
-    return MakePtr<DataRenderer>(std::move(data));
+  public:
+    TurboSoundDataIterator(uint_t base, AYM::TrackParameters::Ptr trackParams, ModuleData::Ptr data)
+      : Base(base)
+      , Params(std::move(trackParams))
+      , Model(std::move(data))
+      , Cursor(*Model)
+      , First(*Model)
+      , Second(*Model)
+    {
+      First.Reset();
+      Second.Reset();
+    }
+
+    FramedState GetState() const override
+    {
+      return Cursor.Get();
+    }
+
+    Devices::TurboSound::Registers Advance() override
+    {
+      const auto& state = Cursor.Get();
+      const auto firstReg = RenderFrom(*state.Track, First);
+      auto secondState = *state.Track;
+      secondState.Pattern = Base - 1 - secondState.Pattern;
+      auto secondReg = RenderFrom(secondState, Second);
+      Cursor.NextFrameLooped();
+      return {{std::move(firstReg), std::move(secondReg)}};
+    }
+
+    void Reset() override
+    {
+      Params.Reset();
+      Cursor.Reset();
+      First.Reset();
+      Second.Reset();
+    }
+
+  private:
+    Devices::AYM::Registers RenderFrom(const TrackState& state, DataRenderer& renderer)
+    {
+      if (Params.IsChanged())
+      {
+        Params->FreqTable(Table);
+      }
+      AYM::TrackBuilder builder(Table);
+      renderer.SynthesizeData(state, builder);
+      return builder.GetResult();
+    }
+
+  private:
+    const uint_t Base;
+    Parameters::TrackingHelper<AYM::TrackParameters> Params;
+    const ModuleData::Ptr Model;
+    ModelTrackCursor Cursor;
+    DataRenderer First;
+    DataRenderer Second;
+    AYM::FrequencyTable Table;
+  };
+
+  AYM::DataIterator::Ptr CreateDataIterator(ModuleData::Ptr data, AYM::TrackParameters::Ptr params)
+  {
+    return MakePtr<TrackIterator<ModuleData, ModelTrackCursor, AYM::Synth<DataRenderer>>>(std::move(data),
+                                                                                          std::move(params));
+  }
+
+  TurboSound::DataIterator::Ptr CreateTurboSoundDataIterator(ModuleData::Ptr data, AYM::TrackParameters::Ptr params)
+  {
+    const uint_t base = *data->TurboPatternsOffset;
+    return MakePtr<TurboSoundDataIterator>(base, std::move(params), std::move(data));
   }
 }  // namespace Module::Vortex

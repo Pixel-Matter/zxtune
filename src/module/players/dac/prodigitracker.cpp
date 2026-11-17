@@ -28,7 +28,7 @@ namespace Module::ProDigiTracker
 {
   const uint_t CHANNELS_COUNT = 4;
 
-  const uint64_t Z80_FREQ = 3500000;
+  const uint_t Z80_FREQ = 3500000;
   const uint_t TICKS_PER_CYCLE = 374;
   const uint_t C_1_STEP = 46;
   const uint_t SAMPLES_FREQ = Z80_FREQ * C_1_STEP / TICKS_PER_CYCLE / 256;
@@ -149,21 +149,21 @@ namespace Module::ProDigiTracker
     }
   };
 
-  class DataRenderer : public DAC::DataRenderer
+  class DataRenderer
   {
   public:
-    explicit DataRenderer(ModuleData::Ptr data)
-      : Data(std::move(data))
+    explicit DataRenderer(const ModuleData& data)
+      : Data(data)
     {
       Reset();
     }
 
-    void Reset() override
+    void Reset()
     {
       std::fill(Ornaments.begin(), Ornaments.end(), OrnamentState());
     }
 
-    void SynthesizeData(const TrackState& state, DAC::TrackBuilder& track) override
+    void SynthesizeData(const TrackState& state, DAC::TrackBuilder& track)
     {
       SynthesizeChannelsData(track);
       if (0 == state.Quirk)
@@ -186,7 +186,7 @@ namespace Module::ProDigiTracker
 
     void GetNewLineState(const TrackState& state, DAC::TrackBuilder& track)
     {
-      if (const auto* const line = Data->GetLine(state))
+      if (const auto* const line = Data.GetLine(state))
       {
         line->ForEachChannel(
             [&](auto chan, const auto& src) { GetNewChannelState(src, Ornaments[chan], track.GetChannel(chan)); });
@@ -208,7 +208,7 @@ namespace Module::ProDigiTracker
       {
         if (const uint_t* ornament = src.GetOrnament())
         {
-          ornamentState.Object = &Data->Ornaments.Get(*ornament);
+          ornamentState.Object = &Data.Ornaments.Get(*ornament);
           ornamentState.Position = 0;
           builder.SetNoteSlide(ornamentState.GetOffset());
         }
@@ -222,7 +222,7 @@ namespace Module::ProDigiTracker
     }
 
   private:
-    const ModuleData::Ptr Data;
+    const ModuleData& Data;
     std::array<OrnamentState, CHANNELS_COUNT> Ornaments;
   };
 
@@ -230,14 +230,14 @@ namespace Module::ProDigiTracker
 
 namespace Module::DAC
 {
-  Chiptune::Ptr CreateProDigiTrackerChiptune(const Binary::Container& rawData, Parameters::Container::Ptr properties)
+  Chiptune::Ptr CreateProDigiTrackerChiptune(const Binary::Container& rawData, PropertiesHelper& props)
   {
-    PropertiesHelper props(*properties, ProDigiTracker::CHANNELS_COUNT);
+    props.SetChannels(ProDigiTracker::CHANNELS_COUNT);
     ProDigiTracker::DataBuilder dataBuilder(props);
     if (const auto container = Formats::Chiptune::ProDigiTracker::Parse(rawData, dataBuilder))
     {
       props.SetSource(*container);
-      return CreateTrackingChiptune<ProDigiTracker::DataRenderer>(dataBuilder.CaptureResult(), std::move(properties));
+      return CreateTrackingChiptune<ProDigiTracker::DataRenderer>(dataBuilder.CaptureResult());
     }
     return {};
   }

@@ -28,7 +28,7 @@ namespace Module::DigitalMusicMaker
 {
   const std::size_t CHANNELS_COUNT = 3;
 
-  const uint64_t Z80_FREQ = 3500000;
+  const uint_t Z80_FREQ = 3500000;
   // 119+116+111+10=356 ticks/out cycle = 9831 outs/sec (AY)
   const uint_t TICKS_PER_CYCLE = 119 + 116 + 111 + 10;
   // C-1 step 44/256 32.7Hz = ~1689 samples/sec
@@ -588,23 +588,23 @@ namespace Module::DigitalMusicMaker
     EffectFunc Effect;
   };
 
-  class DataRenderer : public DAC::DataRenderer
+  class DataRenderer
   {
   public:
-    explicit DataRenderer(ModuleData::Ptr data)
-      : Data(std::move(data))
+    explicit DataRenderer(const ModuleData& data)
+      : Data(data)
     {
       Reset();
     }
 
-    void Reset() override
+    void Reset()
     {
       std::fill(Chans.begin(), Chans.end(), ChannelState());
     }
 
-    void SynthesizeData(const TrackState& state, DAC::TrackBuilder& track) override
+    void SynthesizeData(const TrackState& state, DAC::TrackBuilder& track)
     {
-      const auto* const line = 0 == state.Quirk ? Data->GetLine(state) : nullptr;
+      const auto* const line = 0 == state.Quirk ? Data.GetLine(state) : nullptr;
       for (uint_t chan = 0; chan != CHANNELS_COUNT; ++chan)
       {
         DAC::ChannelDataBuilder builder = track.GetChannel(chan);
@@ -616,7 +616,7 @@ namespace Module::DigitalMusicMaker
         {
           if (const auto* const src = line->GetChannel(chan))
           {
-            chanState.OnNote(*src, *Data, builder);
+            chanState.OnNote(*src, Data, builder);
           }
         }
         chanState.GetState(builder);
@@ -624,7 +624,7 @@ namespace Module::DigitalMusicMaker
     }
 
   private:
-    const ModuleData::Ptr Data;
+    const ModuleData& Data;
     std::array<ChannelState, CHANNELS_COUNT> Chans;
   };
 
@@ -632,15 +632,14 @@ namespace Module::DigitalMusicMaker
 
 namespace Module::DAC
 {
-  Chiptune::Ptr CreateDigitalMusicMakerChiptune(const Binary::Container& rawData, Parameters::Container::Ptr properties)
+  Chiptune::Ptr CreateDigitalMusicMakerChiptune(const Binary::Container& rawData, PropertiesHelper& props)
   {
-    PropertiesHelper props(*properties, DigitalMusicMaker::CHANNELS_COUNT);
+    props.SetChannels(DigitalMusicMaker::CHANNELS_COUNT);
     DigitalMusicMaker::DataBuilder dataBuilder(props);
     if (const auto container = Formats::Chiptune::DigitalMusicMaker::Parse(rawData, dataBuilder))
     {
       props.SetSource(*container);
-      return CreateTrackingChiptune<DigitalMusicMaker::DataRenderer>(dataBuilder.CaptureResult(),
-                                                                     std::move(properties));
+      return CreateTrackingChiptune<DigitalMusicMaker::DataRenderer>(dataBuilder.CaptureResult());
     }
     return {};
   }

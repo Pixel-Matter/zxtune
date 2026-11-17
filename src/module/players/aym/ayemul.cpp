@@ -12,16 +12,19 @@
 
 #include "formats/chiptune/emulation/ay.h"
 #include "module/players/aym/aym_base.h"
+#include "module/players/aym/aym_parameters.h"
 #include "module/players/aym/aym_properties_helper.h"
 #include "module/players/duration.h"
+#include "module/players/parameters.h"
 #include "module/players/properties_helper.h"
 #include "module/players/properties_meta.h"
 #include "module/players/streaming.h"
 
-#include "core/core_parameters.h"
+#include "core/parameters.h"
 #include "debug/log.h"
 #include "devices/beeper.h"
 #include "devices/z80.h"
+#include "parameters/identifiers_set.h"
 
 #include "contract.h"
 #include "make_ptr.h"
@@ -44,7 +47,6 @@ namespace Module::AYEMUL
     {
       Chip->Reset();
       Register = 0;
-      Chunks.clear();
       State = Devices::AYM::DataChunk();
       Blocked = false;
     }
@@ -65,11 +67,14 @@ namespace Module::AYEMUL
       if (IsRegisterSelected())
       {
         const auto idx = static_cast<Devices::AYM::Registers::Index>(Register);
-        if (Devices::AYM::DataChunk* chunk = GetChunk(timeStamp))
-        {
-          chunk->Data[idx] = val;
-        }
         State.Data[idx] = val;
+        if (!Blocked)
+        {
+          Devices::AYM::DataChunk chunk;
+          chunk.TimeStamp = timeStamp;
+          chunk.Data[idx] = val;
+          Chip->RenderData(std::move(chunk));
+        }
         return true;
       }
       return false;
@@ -87,11 +92,8 @@ namespace Module::AYEMUL
       }
     }
 
-    Sound::Chunk RenderFrame(const Devices::AYM::Stamp& till)
+    Sound::Chunk RenderTill(const Devices::AYM::Stamp& till)
     {
-      AllocateChunk(till);
-      Chip->RenderData(Chunks);
-      Chunks.clear();
       return Chip->RenderTill(till);
     }
 
@@ -101,23 +103,9 @@ namespace Module::AYEMUL
       return Register < Devices::AYM::Registers::TOTAL;
     }
 
-    Devices::AYM::DataChunk* GetChunk(const Devices::AYM::Stamp& timeStamp)
-    {
-      return Blocked ? nullptr : &AllocateChunk(timeStamp);
-    }
-
-    Devices::AYM::DataChunk& AllocateChunk(const Devices::AYM::Stamp& timeStamp)
-    {
-      Chunks.resize(Chunks.size() + 1);
-      Devices::AYM::DataChunk& res = Chunks.back();
-      res.TimeStamp = timeStamp;
-      return res;
-    }
-
   private:
     const Devices::AYM::Chip::Ptr Chip;
     uint_t Register = 0;
-    std::vector<Devices::AYM::DataChunk> Chunks;
     Devices::AYM::DataChunk State;
     bool Blocked = false;
   };
@@ -154,14 +142,17 @@ namespace Module::AYEMUL
       }
     }
 
-    Sound::Chunk RenderFrame(const Devices::AYM::Stamp& till)
+    Sound::Chunk RenderTill(const Devices::AYM::Stamp& till)
     {
       if (Chunks.empty())
       {
         Chip->RenderTill(till);
         return {};
       }
-      Chip->RenderData(Chunks);
+      for (const auto& chunk : Chunks)
+      {
+        Chip->RenderData(chunk);
+      }
       Chunks.clear();
       return Chip->RenderTill(till);
     }
@@ -223,8 +214,8 @@ namespace Module::AYEMUL
 
     Sound::Chunk RenderFrameTill(Time::AtMicrosecond till)
     {
-      auto aySound = Ay.RenderFrame(till.CastTo<Devices::AYM::TimeUnit>());
-      auto beepSound = Beeper.RenderFrame(till.CastTo<Devices::Beeper::TimeUnit>());
+      auto aySound = Ay.RenderTill(till.CastTo<Devices::AYM::TimeUnit>());
+      auto beepSound = Beeper.RenderTill(till.CastTo<Devices::Beeper::TimeUnit>());
       if (!beepSound.empty())
       {
         if (beepSound.size() > aySound.size())
@@ -441,6 +432,8 @@ namespace Module::AYEMUL
   class CPUParameters : public Devices::Z80::ChipParameters
   {
   public:
+    static const Parameters::IdentifiersSet ALL;
+
     explicit CPUParameters(Parameters::Accessor::Ptr params)
       : Params(std::move(params))
     {}
@@ -452,19 +445,21 @@ namespace Module::AYEMUL
 
     uint_t IntTicks() const override
     {
-      using namespace Parameters::ZXTune::Core::Z80;
-      return Parameters::GetInteger<uint_t>(*Params, INT_TICKS, INT_TICKS_DEFAULT);
+      return static_cast<uint_t>(Parameters::Get<Parameters::ZXTune::Core::Z80::IntTicks>(*Params));
     }
 
-    uint64_t ClockFreq() const override
+    uint_t ClockFreq() const override
     {
       using namespace Parameters::ZXTune::Core::Z80;
-      return Parameters::GetInteger<uint64_t>(*Params, CLOCKRATE, CLOCKRATE_DEFAULT);
+      return Parameters::Get<Clockrate>(*Params);
     }
 
   private:
     const Parameters::Accessor::Ptr Params;
   };
+
+  const Parameters::IdentifiersSet CPUParameters::ALL{Parameters::ZXTune::Core::Z80::Clockrate::Key,
+                                                      Parameters::ZXTune::Core::Z80::IntTicks::Key};
 
   class ModuleData
   {
@@ -488,7 +483,7 @@ namespace Module::AYEMUL
     }
 
     uint_t Frames = 0;
-    Time::Microseconds FrameDuration;
+    uint_t Fadeout = 0;
     uint16_t Registers = 0;
     uint16_t StackPointer = 0;
     Binary::Data::Ptr Memory;
@@ -539,25 +534,71 @@ namespace Module::AYEMUL
     Devices::Z80::Chip::Ptr CPU;
   };
 
+  class FramedState
+  {
+  public:
+    explicit FramedState(uint_t totalFrames)
+      : TotalFrames(totalFrames)
+    {}
+
+    State Get(Time::Microseconds frameDuration) const
+    {
+      return {.At = Time::AtMillisecond() + (frameDuration * CurFrame).CastTo<Time::Millisecond>(), .LoopCount = Loops};
+    }
+
+    void Reset()
+    {
+      CurFrame = 0;
+      Loops = 0;
+    }
+
+    void NextFrame()
+    {
+      if (++CurFrame >= TotalFrames)
+      {
+        CurFrame = 0;
+        ++Loops;
+      }
+    }
+
+    // Moves to a frame-aligned position not exceeding request; returns frames to skip
+    uint_t Seek(Time::AtMillisecond request, Time::Microseconds frameDuration)
+    {
+      Loops = 0;
+      const auto frames =
+          request.Get() * (Time::Microsecond::PER_SECOND / Time::Millisecond::PER_SECOND) / frameDuration.Get();
+      const auto target = static_cast<uint_t>(std::min<uint64_t>(frames, TotalFrames - 1));
+      const auto delta = target >= CurFrame ? target - CurFrame : target;
+      CurFrame = target;
+      return delta;
+    }
+
+  private:
+    const uint_t TotalFrames;
+    uint_t CurFrame = 0;
+    uint_t Loops = 0;
+  };
+
   class Renderer : public Module::Renderer
   {
   public:
-    Renderer(const ModuleData& data, Computer::Ptr comp, DataChannel::Ptr device)
-      : State((data.FrameDuration * data.Frames).CastTo<Time::Millisecond>())
+    Renderer(FrameDurationParameter frameDuration, const ModuleData& data, Computer::Ptr comp, DataChannel::Ptr device)
+      : FrameDuration(std::move(frameDuration))
+      , State(data.Frames)
       , Comp(std::move(comp))
       , Device(std::move(device))
-      , FrameDuration(data.FrameDuration)
     {}
 
     Module::State GetState() const override
     {
-      return State.Get();
+      return State.Get(FrameDuration.Get());
     }
 
     Sound::Chunk Render() override
     {
-      State.ConsumeUpTo(FrameDuration);
-      DeviceTime += FrameDuration;
+      FrameDuration.Synchronize();
+      State.NextFrame();
+      DeviceTime += FrameDuration.Get();
       Comp->ExecuteFrameTill(DeviceTime);
       return Device->RenderFrameTill(DeviceTime);
     }
@@ -572,28 +613,25 @@ namespace Module::AYEMUL
 
     void SetPosition(Time::AtMillisecond request) override
     {
-      auto current = State.Get().At;
+      const auto frameDuration = FrameDuration.Get();
+      const auto current = State.Get(frameDuration).At;
       if (request < current)
       {
-        current = {};
         Comp->Reset();
         Device->Reset();
         DeviceTime = {};
       }
-      const auto delta = State.Seek(request);
-      if (const auto frames = delta.Divide<uint_t>(FrameDuration))
+      if (const auto frames = State.Seek(request, frameDuration))
       {
-        // correct logical position
-        State.Seek(current + (FrameDuration * frames).CastTo<Time::Millisecond>());
-        Comp->SkipFrames(DeviceTime, frames, FrameDuration);
+        Comp->SkipFrames(DeviceTime, frames, frameDuration);
       }
     }
 
   private:
-    TimedState State;
+    FrameDurationParameter FrameDuration;
+    FramedState State;
     const Computer::Ptr Comp;
     const DataChannel::Ptr Device;
-    const Time::Microseconds FrameDuration;
     // Monotonic time, does not change on fast-forward
     Time::AtMicrosecond DeviceTime;
   };
@@ -616,10 +654,7 @@ namespace Module::AYEMUL
     void SetDuration(uint_t duration, uint_t fadeout) override
     {
       Data->Frames = duration;
-      if (fadeout)
-      {
-        Properties.SetFadeout((AYM::BASE_FRAME_DURATION * fadeout).CastTo<Time::Millisecond>());
-      }
+      Data->Fadeout = fadeout;
     }
 
     void SetRegisters(uint16_t reg, uint16_t sp) override
@@ -640,10 +675,13 @@ namespace Module::AYEMUL
 
     void FillTimingInfo(const Parameters::Accessor& params)
     {
-      Data->FrameDuration = AYM::BASE_FRAME_DURATION;
       if (!Data->Frames)
       {
-        Data->Frames = GetDefaultDuration(params).Divide<uint_t>(Data->FrameDuration);
+        Data->Frames = GetDefaultDuration(params).Divide<uint_t>(AYM::BASE_FRAME_DURATION);
+      }
+      if (Data->Fadeout)
+      {
+        Properties.SetFadeout((AYM::BASE_FRAME_DURATION * Data->Fadeout).CastTo<Time::Millisecond>());
       }
     }
 
@@ -663,7 +701,7 @@ namespace Module::AYEMUL
   class StubBeeper : public Devices::Beeper::Chip
   {
   public:
-    void RenderData(const std::vector<Devices::Beeper::DataChunk>& /*src*/) override {}
+    void RenderData(Devices::Beeper::DataChunk /*src*/) override {}
 
     void Reset() override {}
 
@@ -686,11 +724,11 @@ namespace Module::AYEMUL
       return Params->Version();
     }
 
-    uint64_t ClockFreq() const override
+    uint_t ClockFreq() const override
     {
       const uint_t MIN_Z80_TICKS_PER_OUTPUT = 10;
       using namespace Parameters::ZXTune::Core::Z80;
-      const auto cpuClock = Parameters::GetInteger<uint64_t>(*Params, CLOCKRATE, CLOCKRATE_DEFAULT);
+      const auto cpuClock = Parameters::Get<Clockrate>(*Params);
       return cpuClock / MIN_Z80_TICKS_PER_OUTPUT;
     }
 
@@ -716,11 +754,12 @@ namespace Module::AYEMUL
     Holder(ModuleData::Ptr data, Parameters::Accessor::Ptr params)
       : Data(std::move(data))
       , Properties(std::move(params))
+      , FrameDuration(Properties, AYM::BASE_FRAME_DURATION)
     {}
 
     Information GetModuleInformation() const override
     {
-      return CreateTimedInfo((Data->FrameDuration * Data->Frames).CastTo<Time::Millisecond>());
+      return CreateTimedInfo((FrameDuration.Get() * Data->Frames).CastTo<Time::Millisecond>());
     }
 
     Parameters::Accessor::Ptr GetModuleProperties() const override
@@ -739,16 +778,18 @@ namespace Module::AYEMUL
     Renderer::Ptr CreateRenderer(Parameters::Accessor::Ptr params, Devices::AYM::Chip::Ptr ay,
                                  Devices::Beeper::Chip::Ptr beep) const
     {
-      auto cpuParams = MakePtr<CPUParameters>(std::move(params));
+      auto cpuParams = MakePtr<CPUParameters>(params);
       auto channel = MakePtr<DataChannel>(std::move(ay), std::move(beep));
       auto cpuPorts = PortsPlexer::Create(channel);
       auto comp = MakePtr<Computer>(Data, std::move(cpuParams), std::move(cpuPorts));
-      return MakePtr<Renderer>(*Data, std::move(comp), std::move(channel));
+      return MakePtr<Renderer>(FrameDurationParameter(std::move(params), AYM::BASE_FRAME_DURATION), *Data,
+                               std::move(comp), std::move(channel));
     }
 
   private:
     const ModuleData::Ptr Data;
     const Parameters::Accessor::Ptr Properties;
+    FrameDurationParameter FrameDuration;
   };
 
   class Factory : public Module::Factory
@@ -762,6 +803,7 @@ namespace Module::AYEMUL
       if (const auto container = Formats::Chiptune::AY::Parse(rawData, 0, builder))
       {
         props.SetSource(*container);
+        props.SetSupportedParameters(AYM::ChipParameters::ALL | CPUParameters::ALL);
         builder.FillTimingInfo(params);
         auto data = builder.GetResult();
         return MakePtr<Holder>(std::move(data), std::move(properties));

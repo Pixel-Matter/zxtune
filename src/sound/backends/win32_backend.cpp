@@ -11,15 +11,15 @@
 #include "sound/backends/backend_impl.h"
 #include "sound/backends/gates/win32_api.h"
 #include "sound/backends/l10n.h"
+#include "sound/backends/parameters.h"
 #include "sound/backends/storage.h"
 #include "sound/backends/volume_control.h"
 #include "sound/backends/win32.h"
 
 #include "debug/log.h"
 #include "math/numeric.h"
-#include "sound/backends_parameters.h"
+#include "sound/parameters.h"
 #include "sound/render_params.h"
-#include "sound/sound_parameters.h"
 #include "strings/encoding.h"
 
 #include "contract.h"
@@ -383,14 +383,12 @@ namespace Sound::Win32
 
     int_t GetDevice() const
     {
-      using namespace Parameters::ZXTune::Sound::Backends::Win32;
-      return Parameters::GetInteger<int_t>(Accessor, DEVICE, DEVICE_DEFAULT);
+      return Parameters::Get<Parameters::ZXTune::Sound::Backends::Win32::Device>(Accessor);
     }
 
     uint_t GetBuffers() const
     {
-      using namespace Parameters::ZXTune::Sound::Backends::Win32;
-      const auto buffers = Parameters::GetInteger<uint_t>(Accessor, BUFFERS, BUFFERS_DEFAULT);
+      const auto buffers = Parameters::Get<Parameters::ZXTune::Sound::Backends::Win32::Buffers>(Accessor);
       if (!Math::InRange(buffers, BUFFERS_MIN, BUFFERS_MAX))
       {
         throw MakeFormattedError(THIS_LINE,
@@ -410,7 +408,6 @@ namespace Sound::Win32
     BackendWorker(Api::Ptr api, Parameters::Accessor::Ptr params)
       : WinApi(std::move(api))
       , BackendParams(std::move(params))
-      , RenderingParameters(RenderParameters::Create(BackendParams))
     {}
 
     ~BackendWorker() override
@@ -463,7 +460,7 @@ namespace Sound::Win32
       std::memset(&format, 0, sizeof(format));
       format.wFormatTag = WAVE_FORMAT_PCM;
       format.nChannels = Sample::CHANNELS;
-      format.nSamplesPerSec = static_cast< ::DWORD>(RenderingParameters->SoundFreq());
+      format.nSamplesPerSec = static_cast< ::DWORD>(GetSoundFrequency(*BackendParams));
       format.nBlockAlign = sizeof(Sample);
       format.nAvgBytesPerSec = format.nSamplesPerSec * format.nBlockAlign;
       format.wBitsPerSample = Sample::BITS;
@@ -490,7 +487,6 @@ namespace Sound::Win32
   private:
     const Api::Ptr WinApi;
     const Parameters::Accessor::Ptr BackendParams;
-    const RenderParameters::Ptr RenderingParameters;
     WaveOutObjects Objects;
   };
 

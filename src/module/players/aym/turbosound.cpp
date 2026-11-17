@@ -10,6 +10,7 @@
 
 #include "module/players/aym/turbosound.h"
 
+#include "module/players/parameters.h"
 #include "module/players/streaming.h"
 #include "parameters/src/names_set.h"
 
@@ -145,43 +146,36 @@ namespace Module::TurboSound
     const Parameters::Accessor::Ptr Second;
   };
 
-  State CreateState(State lh, State rh)
-  {
-    if (lh.Track && rh.Track)
-    {
-      lh.Track->Channels += rh.Track->Channels;
-    }
-    return lh;
-  }
-
-  class MergedDataIterator : public DataIterator
+  class MergedSource : public DataIterator
   {
   public:
-    MergedDataIterator(AYM::DataIterator::Ptr first, AYM::DataIterator::Ptr second)
+    MergedSource(AYM::DataIterator::Ptr first, AYM::DataIterator::Ptr second)
       : First(std::move(first))
       , Second(std::move(second))
     {}
+
+    FramedState GetState() const override
+    {
+      auto first = First->GetState();
+      auto second = Second->GetState();
+      if (first.Track && second.Track)
+      {
+        first.Track->Channels += second.Track->Channels;
+      }
+      return first;
+    }
+
+    Devices::TurboSound::Registers Advance() override
+    {
+      auto first = First->Advance();
+      auto second = Second->Advance();
+      return {{std::move(first), std::move(second)}};
+    }
 
     void Reset() override
     {
       First->Reset();
       Second->Reset();
-    }
-
-    void NextFrame() override
-    {
-      First->NextFrame();
-      Second->NextFrame();
-    }
-
-    State GetState() const override
-    {
-      return CreateState(First->GetState(), Second->GetState());
-    }
-
-    Devices::TurboSound::Registers GetData() const override
-    {
-      return {{First->GetData(), Second->GetData()}};
     }
 
   private:
@@ -192,22 +186,22 @@ namespace Module::TurboSound
   class Renderer : public Module::Renderer
   {
   public:
-    Renderer(Time::Microseconds frameDuration, DataIterator::Ptr iterator, Devices::TurboSound::Chip::Ptr device)
-      : Iterator(std::move(iterator))
+    Renderer(FrameDurationParameter frameDuration, DataIterator::Ptr iterator, Devices::TurboSound::Chip::Ptr device)
+      : FrameDuration(std::move(frameDuration))
+      , Iterator(std::move(iterator))
       , Device(std::move(device))
-      , FrameDuration(frameDuration)
     {}
 
     State GetState() const override
     {
-      return Iterator->GetState();
+      return ToState(Iterator->GetState(), FrameDuration.Get());
     }
 
     Sound::Chunk Render() override
     {
       TransferChunk();
-      Iterator->NextFrame();
-      LastChunk.TimeStamp += FrameDuration;
+      FrameDuration.Synchronize();
+      LastChunk.TimeStamp += FrameDuration.Get<Devices::TurboSound::TimeUnit>();
       return Device->RenderTill(LastChunk.TimeStamp);
     }
 
@@ -220,39 +214,37 @@ namespace Module::TurboSound
 
     void SetPosition(Time::AtMillisecond request) override
     {
-      if (request < Iterator->GetState().At)
+      if (request < GetState().At)
       {
         Iterator->Reset();
         Device->Reset();
         LastChunk.TimeStamp = {};
       }
-      while (Iterator->GetState().At < request)
+      while (GetState().At < request)
       {
         TransferChunk();
-        Iterator->NextFrame();
       }
     }
 
   private:
     void TransferChunk()
     {
-      LastChunk.Data = Iterator->GetData();
+      LastChunk.Data = Iterator->Advance();
       Device->RenderData(LastChunk);
     }
 
   private:
-    const TurboSound::DataIterator::Ptr Iterator;
+    FrameDurationParameter FrameDuration;
+    const DataIterator::Ptr Iterator;
     const Devices::TurboSound::Chip::Ptr Device;
-    const Time::Duration<Devices::TurboSound::TimeUnit> FrameDuration;
     Devices::TurboSound::DataChunk LastChunk;
   };
 
   class MergedChiptune : public Chiptune
   {
   public:
-    MergedChiptune(Parameters::Accessor::Ptr props, AYM::Chiptune::Ptr first, AYM::Chiptune::Ptr second)
-      : Properties(std::move(props))
-      , First(std::move(first))
+    MergedChiptune(AYM::Chiptune::Ptr first, AYM::Chiptune::Ptr second)
+      : First(std::move(first))
       , Second(std::move(second))
     {}
 
@@ -261,31 +253,24 @@ namespace Module::TurboSound
       return First->GetFrameDuration();
     }
 
-    TrackModel::Ptr FindTrackModel() const override
+    FramedInformation GetInformation() const override
     {
-      return First->FindTrackModel();
-    }
-
-    Module::StreamModel::Ptr FindStreamModel() const override
-    {
-      return First->FindStreamModel();
-    }
-
-    Parameters::Accessor::Ptr GetProperties() const override
-    {
-      auto mixProps = MakePtr<MergedModuleProperties>(First->GetProperties(), Second->GetProperties());
-      return Parameters::CreateMergedAccessor(Properties, std::move(mixProps));
+      auto info = First->GetInformation();
+      if (info.Track)
+      {
+        info.Track->ChannelsCount = TRACK_CHANNELS;
+      }
+      return info;
     }
 
     DataIterator::Ptr CreateDataIterator(AYM::TrackParameters::Ptr first,
                                          AYM::TrackParameters::Ptr second) const override
     {
-      return MakePtr<MergedDataIterator>(First->CreateDataIterator(std::move(first)),
-                                         Second->CreateDataIterator(std::move(second)));
+      return MakePtr<MergedSource>(First->CreateDataIterator(std::move(first)),
+                                   Second->CreateDataIterator(std::move(second)));
     }
 
   private:
-    const Parameters::Accessor::Ptr Properties;
     const AYM::Chiptune::Ptr First;
     const AYM::Chiptune::Ptr Second;
   };
@@ -295,41 +280,37 @@ namespace Module::TurboSound
     using MixerType = Sound::ThreeChannelsMatrixMixer;
     auto mixer = MixerType::Create();
     auto pollParams = Sound::CreateMixerNotificationParameters(std::move(params), mixer);
-    auto chipParams = AYM::CreateChipParameters(samplerate, std::move(pollParams));
+    auto chipParams = AYM::ChipParameters::Create(samplerate, std::move(pollParams));
     return Devices::TurboSound::CreateChip(std::move(chipParams), std::move(mixer));
   }
 
   class HolderImpl : public Holder
   {
   public:
-    HolderImpl(Chiptune::Ptr chiptune)
+    HolderImpl(Chiptune::Ptr chiptune, Parameters::Accessor::Ptr properties, Time::Microseconds frameDuration)
       : Tune(std::move(chiptune))
+      , Properties(std::move(properties))
+      , FrameDuration(frameDuration)
     {}
 
     Information GetModuleInformation() const override
     {
-      if (auto track = Tune->FindTrackModel())
-      {
-        return CreateTrackInfoFixedChannels(Tune->GetFrameDuration(), *track, TRACK_CHANNELS);
-      }
-      else
-      {
-        return CreateStreamInfo(Tune->GetFrameDuration(), *Tune->FindStreamModel());
-      }
+      return ToInformation(Tune->GetInformation(), FrameDuration);
     }
 
     Parameters::Accessor::Ptr GetModuleProperties() const override
     {
-      return Tune->GetProperties();
+      return Properties;
     }
 
     Renderer::Ptr CreateRenderer(uint_t samplerate, Parameters::Accessor::Ptr params) const override
     {
+      auto rendererParams = params;
       auto iterator =
           Tune->CreateDataIterator(AYM::TrackParameters::Create(params, 0), AYM::TrackParameters::Create(params, 1));
       auto chip = CreateChip(samplerate, std::move(params));
-      return MakePtr<Renderer>(Tune->GetFrameDuration() /*TODO: speed variation*/, std::move(iterator),
-                               std::move(chip));
+      return MakePtr<Renderer>(FrameDurationParameter(std::move(rendererParams), AYM::BASE_FRAME_DURATION),
+                               std::move(iterator), std::move(chip));
     }
 
     const Chiptune& GetChiptune() const override
@@ -339,9 +320,11 @@ namespace Module::TurboSound
 
   private:
     const Chiptune::Ptr Tune;
+    const Parameters::Accessor::Ptr Properties;
+    const Time::Microseconds FrameDuration;
   };
 
-  Chiptune::Ptr CreateChiptune(Parameters::Accessor::Ptr params, AYM::Chiptune::Ptr first, AYM::Chiptune::Ptr second)
+  Chiptune::Ptr CreateChiptune(AYM::Chiptune::Ptr first, AYM::Chiptune::Ptr second)
   {
     /* TODO: think about it
     if (first->GetInformation()->FramesCount() < second->GetInformation()->FramesCount())
@@ -349,11 +332,19 @@ namespace Module::TurboSound
       std::swap(first, second);
     }
     */
-    return MakePtr<MergedChiptune>(std::move(params), std::move(first), std::move(second));
+    return MakePtr<MergedChiptune>(std::move(first), std::move(second));
   }
 
-  Holder::Ptr CreateHolder(Chiptune::Ptr chiptune)
+  Parameters::Accessor::Ptr CreateModuleProperties(Parameters::Accessor::Ptr outer, Parameters::Accessor::Ptr first,
+                                                   Parameters::Accessor::Ptr second)
   {
-    return MakePtr<HolderImpl>(std::move(chiptune));
+    auto mixProps = MakePtr<MergedModuleProperties>(std::move(first), std::move(second));
+    return Parameters::CreateMergedAccessor(std::move(outer), std::move(mixProps));
+  }
+
+  Holder::Ptr CreateHolder(Chiptune::Ptr chiptune, Parameters::Accessor::Ptr properties)
+  {
+    const FrameDurationParameter frameDuration(properties, AYM::BASE_FRAME_DURATION);
+    return MakePtr<HolderImpl>(std::move(chiptune), std::move(properties), frameDuration.Get());
   }
 }  // namespace Module::TurboSound

@@ -12,6 +12,7 @@
 
 #include "formats/chiptune/aym/protracker3.h"
 #include "module/players/aym/aym_base_track.h"
+#include "module/players/aym/turbosound.h"
 
 namespace Module::Vortex
 {
@@ -37,7 +38,7 @@ namespace Module::Vortex
     EMPTY,
     // period,delta
     GLISS,
-    // period,delta,target note
+    // period,delta
     GLISS_NOTE,
     // offset
     SAMPLEOFFSET,
@@ -74,5 +75,7 @@ namespace Module::Vortex
     const Pattern* FindMirroredPattern(uint_t pattern) const;
   };
 
-  AYM::DataRenderer::Ptr CreateDataRenderer(ModuleData::Ptr data);
+  //! Factories hide the concrete data renderer in the .cpp
+  AYM::DataIterator::Ptr CreateDataIterator(ModuleData::Ptr data, AYM::TrackParameters::Ptr params);
+  TurboSound::DataIterator::Ptr CreateTurboSoundDataIterator(ModuleData::Ptr data, AYM::TrackParameters::Ptr params);
 }  // namespace Module::Vortex

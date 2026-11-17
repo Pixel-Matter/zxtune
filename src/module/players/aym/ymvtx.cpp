@@ -16,7 +16,7 @@
 #include "module/players/properties_meta.h"
 
 #include "binary/container.h"
-#include "core/core_parameters.h"
+#include "core/parameters.h"
 #include "parameters/container.h"
 #include "strings/conversion.h"
 
@@ -73,7 +73,7 @@ namespace Module::YMVTX
 
     void SetChipType(bool ym) override
     {
-      Properties.SetChipType(ym ? Parameters::ZXTune::Core::AYM::TYPE_YM : Parameters::ZXTune::Core::AYM::TYPE_AY);
+      Properties.SetChipType(ym ? Devices::AYM::TYPE_YM2149F : Devices::AYM::TYPE_AY38910);
     }
 
     void SetStereoMode(uint_t mode) override
@@ -91,7 +91,7 @@ namespace Module::YMVTX
       // TODO:
     }
 
-    void SetClockrate(uint64_t freq) override
+    void SetClockrate(uint_t freq) override
     {
       Properties.SetChipFrequency(freq);
     }
@@ -152,10 +152,9 @@ namespace Module::YMVTX
 
 namespace Module::AYM
 {
-  Chiptune::Ptr CreateModule(const Binary::Container& rawData, Parameters::Container::Ptr properties,
+  Chiptune::Ptr CreateModule(const Binary::Container& rawData, PropertiesHelper& props,
                              Formats::Chiptune::YM::Parser parse)
   {
-    PropertiesHelper props(*properties);
     YMVTX::DataBuilder dataBuilder(props);
     if (const auto container = parse(rawData, dataBuilder))
     {
@@ -163,24 +162,26 @@ namespace Module::AYM
       {
         // TODO: detect platform by intfreq and clockrate
         props.SetSource(*container);
-        return CreateStreamedChiptune(dataBuilder.GetFrameDuration(), std::move(data), std::move(properties));
+        const auto frameDuration = dataBuilder.GetFrameDuration();
+        props.SetFrameDuration(frameDuration);
+        return CreateStreamedChiptune(frameDuration, std::move(data));
       }
     }
     return {};
   }
 
-  Chiptune::Ptr CreateYMChiptune(const Binary::Container& rawData, Parameters::Container::Ptr properties)
+  Chiptune::Ptr CreateYMChiptune(const Binary::Container& rawData, PropertiesHelper& props)
   {
-    return CreateModule(rawData, std::move(properties), Formats::Chiptune::YM::Parse);
+    return CreateModule(rawData, props, Formats::Chiptune::YM::Parse);
   }
 
-  Chiptune::Ptr CreateYMPackedChiptune(const Binary::Container& rawData, Parameters::Container::Ptr properties)
+  Chiptune::Ptr CreateYMPackedChiptune(const Binary::Container& rawData, PropertiesHelper& props)
   {
-    return CreateModule(rawData, std::move(properties), Formats::Chiptune::YM::ParsePacked);
+    return CreateModule(rawData, props, Formats::Chiptune::YM::ParsePacked);
   }
 
-  Chiptune::Ptr CreateVTXChiptune(const Binary::Container& rawData, Parameters::Container::Ptr properties)
+  Chiptune::Ptr CreateVTXChiptune(const Binary::Container& rawData, PropertiesHelper& props)
   {
-    return CreateModule(rawData, std::move(properties), Formats::Chiptune::YM::ParseVTX);
+    return CreateModule(rawData, props, Formats::Chiptune::YM::ParseVTX);
   }
 }  // namespace Module::AYM

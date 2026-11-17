@@ -6,5 +6,5 @@ cd "$(dirname "$0")"
 git ls-files \
     | grep -vE '^(include/|src/|uzx/|regression/[^/]+$|3rdparty/fmt/(include|src)/|3rdparty/fmt/LICENSE)' \
     | grep -vxE '(LICENSE|README|UZX)\.md|uzx-trim\.sh|CMakeLists\.txt|\.clang-format|\.gitignore|\.gitattributes' \
-    | git --literal-pathspecs rm -q --ignore-unmatch --pathspec-from-file=-
-git rm -rq --ignore-unmatch src/module/players/external src/formats/test regression/Makefile 'regression/atom_ant.ay*'
+    | git --literal-pathspecs rm -qf --ignore-unmatch --pathspec-from-file=-
+git rm -rqf --ignore-unmatch src/module/players/external src/formats/test regression/Makefile 'regression/atom_ant.ay*'

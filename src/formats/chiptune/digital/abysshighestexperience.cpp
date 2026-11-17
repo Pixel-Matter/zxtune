@@ -222,7 +222,13 @@ namespace Formats::Chiptune
         Strings::Array names(count);
         for (uint_t smp = 0; smp < count; ++smp)
         {
-          names[smp] = Strings::SanitizeKeepPadding(Stream.ReadCString(Stream.GetRestSize()));
+          const auto restSize = Stream.GetRestSize();
+          // Some HVL files omit trailing sample names
+          if (0 == restSize)
+          {
+            break;
+          }
+          names[smp] = Strings::SanitizeKeepPadding(Stream.ReadCString(restSize));
         }
         meta.SetStrings(names);
       }
@@ -331,9 +337,13 @@ namespace Formats::Chiptune
         return {};
       }
 
+      Format format(data);
+      if (!format.Check())
+      {
+        return {};
+      }
       try
       {
-        Format format(data);
         format.Parse(target);
         return format.GetContainer();
       }

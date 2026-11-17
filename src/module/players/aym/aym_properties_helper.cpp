@@ -10,9 +10,10 @@
 
 #include "module/players/aym/aym_properties_helper.h"
 
+#include "module/players/aym/aym_parameters.h"
 #include "module/players/platforms.h"
 
-#include "core/core_parameters.h"
+#include "core/parameters.h"
 
 #include "string_view.h"
 
@@ -25,6 +26,7 @@ namespace Module::AYM
   {
     SetPlatform(Platforms::ZX_SPECTRUM);
     SetChipsCount(1);
+    SetSupportedParameters(ChipParameters::ALL);
   }
 
   void PropertiesHelper::SetChipsCount(uint_t count)
@@ -35,21 +37,23 @@ namespace Module::AYM
   void PropertiesHelper::SetFrequencyTable(StringView freqTable)
   {
     assert(!freqTable.empty());
-    Delegate.SetValue(Parameters::ZXTune::Core::AYM::TABLE, freqTable);
+    Parameters::Set<Parameters::ZXTune::Core::AYM::Table>(Delegate, freqTable);
+    // Defining a table means the renderer reads it, unlike raw stream formats
+    SetSupportedParameters(ChipParameters::ALL | TrackParameters::ALL);
   }
 
   void PropertiesHelper::SetChipType(uint_t type)
   {
-    Delegate.SetValue(Parameters::ZXTune::Core::AYM::TYPE, type);
+    Parameters::Set<Parameters::ZXTune::Core::AYM::Chip>(Delegate, type);
   }
 
   void PropertiesHelper::SetChannelsLayout(uint_t layout)
   {
-    Delegate.SetValue(Parameters::ZXTune::Core::AYM::LAYOUT, layout);
+    Parameters::Set<Parameters::ZXTune::Core::AYM::Layout>(Delegate, layout);
   }
 
-  void PropertiesHelper::SetChipFrequency(uint64_t freq)
+  void PropertiesHelper::SetChipFrequency(uint_t freq)
   {
-    Delegate.SetValue(Parameters::ZXTune::Core::AYM::CLOCKRATE, freq);
+    Parameters::Set<Parameters::ZXTune::Core::AYM::Clockrate>(Delegate, freq);
   }
 }  // namespace Module::AYM

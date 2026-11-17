@@ -28,7 +28,7 @@ namespace Module::ChipTracker
 {
   const std::size_t CHANNELS_COUNT = 4;
 
-  const uint64_t Z80_FREQ = 3500000;
+  const uint_t Z80_FREQ = 3500000;
   // one cycle is 4 outputs
   const uint_t OUTS_PER_CYCLE = 4;
   const uint_t TICKS_PER_CYCLE = 890;
@@ -158,21 +158,21 @@ namespace Module::ChipTracker
     }
   };
 
-  class DataRenderer : public DAC::DataRenderer
+  class DataRenderer
   {
   public:
-    explicit DataRenderer(ModuleData::Ptr data)
-      : Data(std::move(data))
+    explicit DataRenderer(const ModuleData& data)
+      : Data(data)
     {
       Reset();
     }
 
-    void Reset() override
+    void Reset()
     {
       std::fill(Gliss.begin(), Gliss.end(), GlissData());
     }
 
-    void SynthesizeData(const TrackState& state, DAC::TrackBuilder& track) override
+    void SynthesizeData(const TrackState& state, DAC::TrackBuilder& track)
     {
       SynthesizeChannelsData(track);
       if (0 == state.Quirk)
@@ -198,7 +198,7 @@ namespace Module::ChipTracker
     void GetNewLineState(const TrackState& state, DAC::TrackBuilder& track)
     {
       Gliss.fill(GlissData());
-      if (const auto* const line = Data->GetLine(state))
+      if (const auto* const line = Data.GetLine(state))
       {
         line->ForEachChannel(
             [&](auto chan, const auto& src) { GetNewChannelState(src, Gliss[chan], track.GetChannel(chan)); });
@@ -244,7 +244,7 @@ namespace Module::ChipTracker
     }
 
   private:
-    const ModuleData::Ptr Data;
+    const ModuleData& Data;
     std::array<GlissData, CHANNELS_COUNT> Gliss;
   };
 
@@ -252,14 +252,14 @@ namespace Module::ChipTracker
 
 namespace Module::DAC
 {
-  Chiptune::Ptr CreateChipTrackerChiptune(const Binary::Container& rawData, Parameters::Container::Ptr properties)
+  Chiptune::Ptr CreateChipTrackerChiptune(const Binary::Container& rawData, PropertiesHelper& props)
   {
-    PropertiesHelper props(*properties, ChipTracker::CHANNELS_COUNT);
+    props.SetChannels(ChipTracker::CHANNELS_COUNT);
     ChipTracker::DataBuilder dataBuilder(props);
     if (const auto container = Formats::Chiptune::ChipTracker::Parse(rawData, dataBuilder))
     {
       props.SetSource(*container);
-      return CreateTrackingChiptune<ChipTracker::DataRenderer>(dataBuilder.CaptureResult(), std::move(properties));
+      return CreateTrackingChiptune<ChipTracker::DataRenderer>(dataBuilder.CaptureResult());
     }
     return {};
   }

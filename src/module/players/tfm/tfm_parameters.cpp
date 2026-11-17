@@ -10,18 +10,24 @@
 
 #include "module/players/tfm/tfm_parameters.h"
 
-#include "core/core_parameters.h"
+#include "core/parameters.h"
+#include "l10n/api.h"
 
+#include "error_tools.h"
 #include "make_ptr.h"
 
 #include <utility>
 
 namespace Module::TFM
 {
-  class ChipParameters : public Devices::TFM::ChipParameters
+  const L10n::TranslateFunctor translate = L10n::TranslateFunctor("module");
+
+  namespace Fm = Parameters::ZXTune::Core::FM;
+
+  class ChipParametersImpl : public Devices::TFM::ChipParameters
   {
   public:
-    ChipParameters(uint_t samplerate, Parameters::Accessor::Ptr params)
+    ChipParametersImpl(uint_t samplerate, Parameters::Accessor::Ptr params)
       : Samplerate(samplerate)
       , Params(std::move(params))
     {}
@@ -31,10 +37,15 @@ namespace Module::TFM
       return Params->Version();
     }
 
-    uint64_t ClockFreq() const override
+    uint_t ClockFreq() const override
     {
       using namespace Parameters::ZXTune::Core::FM;
-      return Parameters::GetInteger<uint64_t>(*Params, CLOCKRATE, CLOCKRATE_DEFAULT);
+      const auto val = Parameters::Get<Clockrate>(*Params);
+      if (!Parameters::Validate<Clockrate>(val))
+      {
+        throw MakeFormattedError(THIS_LINE, translate("Invalid clock frequency ({})."), val);
+      }
+      return val;
     }
 
     uint_t SoundFreq() const override
@@ -45,7 +56,7 @@ namespace Module::TFM
     uint_t MuteMask() const override
     {
       using namespace Parameters::ZXTune::Core;
-      return Parameters::GetInteger(*Params, CHANNELS_MASK, CHANNELS_MASK_DEFAULT);
+      return Parameters::Get<ChannelsMask>(*Params);
     }
 
   private:
@@ -53,8 +64,11 @@ namespace Module::TFM
     const Parameters::Accessor::Ptr Params;
   };
 
-  Devices::TFM::ChipParameters::Ptr CreateChipParameters(uint_t samplerate, Parameters::Accessor::Ptr params)
+  const Parameters::IdentifiersSet ChipParameters::ALL{Fm::Clockrate::Key,
+                                                       Parameters::ZXTune::Core::FrameDuration::Key};
+
+  Devices::TFM::ChipParameters::Ptr ChipParameters::Create(uint_t samplerate, Parameters::Accessor::Ptr params)
   {
-    return MakePtr<ChipParameters>(samplerate, std::move(params));
+    return MakePtr<ChipParametersImpl>(samplerate, std::move(params));
   }
 }  // namespace Module::TFM

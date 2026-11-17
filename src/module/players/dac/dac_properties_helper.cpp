@@ -10,26 +10,32 @@
 
 #include "module/players/dac/dac_properties_helper.h"
 
+#include "module/players/dac/dac_parameters.h"
 #include "module/players/platforms.h"
 
-#include "core/core_parameters.h"
+#include "core/parameters.h"
 
 namespace Module::DAC
 {
-  PropertiesHelper::PropertiesHelper(Parameters::Modifier& delegate, uint_t channels)
+  PropertiesHelper::PropertiesHelper(Parameters::Modifier& delegate)
     : Module::PropertiesHelper(delegate)
   {
+    SetPlatform(Platforms::ZX_SPECTRUM);
+    SetSupportedParameters(ChipParameters::ALL);
+  }
+
+  void PropertiesHelper::SetChannels(uint_t count)
+  {
     Strings::Array chans;
-    for (uint_t ch = 0; ch < channels; ++ch)
+    for (uint_t ch = 0; ch < count; ++ch)
     {
       chans.emplace_back(1, 'A' + ch);
     }
-    SetChannels(chans);
-    SetPlatform(Platforms::ZX_SPECTRUM);
+    Module::PropertiesHelper::SetChannels(chans);
   }
 
   void PropertiesHelper::SetSamplesFrequency(uint_t freq)
   {
-    Delegate.SetValue(Parameters::ZXTune::Core::DAC::SAMPLES_FREQUENCY, freq);
+    Parameters::Set<Parameters::ZXTune::Core::DAC::SamplesFrequency>(Delegate, freq);
   }
 }  // namespace Module::DAC

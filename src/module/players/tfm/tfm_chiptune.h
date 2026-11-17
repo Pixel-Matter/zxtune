@@ -20,13 +20,7 @@ namespace Module::TFM
 {
   const auto BASE_FRAME_DURATION = Time::Microseconds::FromFrequency(50);
 
-  class DataIterator : public Iterator
-  {
-  public:
-    using Ptr = std::unique_ptr<DataIterator>;
-
-    virtual void GetData(Devices::TFM::Registers& res) const = 0;
-  };
+  using DataIterator = Iterator<Devices::TFM::Registers>;
 
   class Chiptune
   {
@@ -36,8 +30,7 @@ namespace Module::TFM
 
     virtual Time::Microseconds GetFrameDuration() const = 0;
 
-    virtual Information GetInformation() const = 0;
-    virtual Parameters::Accessor::Ptr GetProperties() const = 0;
+    virtual FramedInformation GetInformation() const = 0;
     virtual DataIterator::Ptr CreateDataIterator() const = 0;
   };
 }  // namespace Module::TFM

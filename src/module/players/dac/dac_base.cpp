@@ -11,6 +11,7 @@
 #include "module/players/dac/dac_base.h"
 
 #include "module/players/dac/dac_parameters.h"
+#include "module/players/parameters.h"
 
 #include "sound/mixer_factory.h"
 #include "sound/multichannel_sample.h"
@@ -19,72 +20,25 @@
 
 namespace Module
 {
-  class DACDataIterator : public DAC::DataIterator
-  {
-  public:
-    DACDataIterator(Iterator::Ptr delegate, DAC::DataRenderer::Ptr renderer)
-      : Delegate(std::move(delegate))
-      , Render(std::move(renderer))
-    {
-      FillCurrentData();
-    }
-
-    void Reset() override
-    {
-      Delegate->Reset();
-      Render->Reset();
-      FillCurrentData();
-    }
-
-    void NextFrame() override
-    {
-      Delegate->NextFrame();
-      FillCurrentData();
-    }
-
-    Module::State GetState() const override
-    {
-      return Delegate->GetState();
-    }
-
-    void GetData(Devices::DAC::Channels& res) const override
-    {
-      res.assign(CurrentData.begin(), CurrentData.end());
-    }
-
-  private:
-    void FillCurrentData()
-    {
-      DAC::TrackBuilder builder;
-      Render->SynthesizeData(*Delegate->GetState().Track, builder);
-      builder.GetResult(CurrentData);
-    }
-
-  private:
-    const Iterator::Ptr Delegate;
-    const DAC::DataRenderer::Ptr Render;
-    Devices::DAC::Channels CurrentData;
-  };
-
   class DACRenderer : public Renderer
   {
   public:
-    DACRenderer(Time::Microseconds frameDuration, DAC::DataIterator::Ptr iterator, Devices::DAC::Chip::Ptr device)
-      : Iterator(std::move(iterator))
+    DACRenderer(FrameDurationParameter frameDuration, DAC::DataIterator::Ptr iterator, Devices::DAC::Chip::Ptr device)
+      : FrameDuration(std::move(frameDuration))
+      , Iterator(std::move(iterator))
       , Device(std::move(device))
-      , FrameDuration(frameDuration)
     {}
 
     State GetState() const override
     {
-      return Iterator->GetState();
+      return ToState(Iterator->GetState(), FrameDuration.Get());
     }
 
     Sound::Chunk Render() override
     {
       TransferChunk();
-      Iterator->NextFrame();
-      LastChunk.TimeStamp += FrameDuration;
+      FrameDuration.Synchronize();
+      LastChunk.TimeStamp += FrameDuration.Get<Devices::DAC::TimeUnit>();
       return Device->RenderTill(LastChunk.TimeStamp);
     }
 
@@ -97,68 +51,67 @@ namespace Module
 
     void SetPosition(Time::AtMillisecond request) override
     {
-      if (request < Iterator->GetState().At)
+      if (request < GetState().At)
       {
         Iterator->Reset();
         Device->Reset();
         LastChunk.TimeStamp = {};
       }
-      if (LastChunk.TimeStamp == Devices::DAC::Stamp())
+      while (GetState().At < request)
       {
-        Iterator->GetData(LastChunk.Data);
+        LastChunk.Data = Iterator->Advance();
         Device->UpdateState(LastChunk);
-      }
-      while (Iterator->GetState().At < request)
-      {
-        Iterator->NextFrame();
-        LastChunk.TimeStamp += FrameDuration;
-        Iterator->GetData(LastChunk.Data);
-        Device->UpdateState(LastChunk);
+        LastChunk.TimeStamp += FrameDuration.Get<Devices::DAC::TimeUnit>();
       }
     }
 
   private:
     void TransferChunk()
     {
-      Iterator->GetData(LastChunk.Data);
+      LastChunk.Data = Iterator->Advance();
       Device->RenderData(LastChunk);
     }
 
   private:
+    FrameDurationParameter FrameDuration;
     const DAC::DataIterator::Ptr Iterator;
     const Devices::DAC::Chip::Ptr Device;
-    const Time::Duration<Devices::DAC::TimeUnit> FrameDuration;
     Devices::DAC::DataChunk LastChunk;
   };
 
   class DACHolder : public Holder
   {
   public:
-    explicit DACHolder(DAC::Chiptune::Ptr chiptune)
+    DACHolder(DAC::Chiptune::Ptr chiptune, Parameters::Accessor::Ptr properties, Time::Microseconds frameDuration)
       : Tune(std::move(chiptune))
+      , Properties(std::move(properties))
+      , FrameDuration(frameDuration)
     {}
 
     Information GetModuleInformation() const override
     {
-      return CreateTrackInfo(Tune->GetFrameDuration(), *Tune->GetTrackModel());
+      return ToInformation(CreateTrackInfo(*Tune->GetTrackModel()), FrameDuration);
     }
 
     Parameters::Accessor::Ptr GetModuleProperties() const override
     {
-      return Tune->GetProperties();
+      return Properties;
     }
 
     Renderer::Ptr CreateRenderer(uint_t samplerate, Parameters::Accessor::Ptr params) const override
     {
+      auto rendererParams = params;
       auto iterator = Tune->CreateDataIterator();
       auto chip = DAC::CreateChip(Tune->GetTrackModel()->GetChannelsCount(), samplerate, std::move(params));
       Tune->GetSamples(*chip);
-      return DAC::CreateRenderer(Tune->GetFrameDuration() /*TODO: speed variation*/, std::move(iterator),
-                                 std::move(chip));
+      return DAC::CreateRenderer(FrameDurationParameter(std::move(rendererParams), DAC::BASE_FRAME_DURATION),
+                                 std::move(iterator), std::move(chip));
     }
 
   private:
     const DAC::Chiptune::Ptr Tune;
+    const Parameters::Accessor::Ptr Properties;
+    const Time::Microseconds FrameDuration;
   };
 }  // namespace Module
 
@@ -186,15 +139,10 @@ namespace Module::DAC
     result.assign(Data.begin(), last);
   }
 
-  DataIterator::Ptr CreateDataIterator(Iterator::Ptr iterator, DataRenderer::Ptr renderer)
-  {
-    return MakePtr<DACDataIterator>(std::move(iterator), std::move(renderer));
-  }
-
-  Renderer::Ptr CreateRenderer(Time::Microseconds frameDuration, DAC::DataIterator::Ptr iterator,
+  Renderer::Ptr CreateRenderer(FrameDurationParameter frameDuration, DAC::DataIterator::Ptr iterator,
                                Devices::DAC::Chip::Ptr device)
   {
-    return MakePtr<DACRenderer>(frameDuration, std::move(iterator), std::move(device));
+    return MakePtr<DACRenderer>(std::move(frameDuration), std::move(iterator), std::move(device));
   }
 
   template<unsigned Channels>
@@ -203,7 +151,7 @@ namespace Module::DAC
     using MixerType = Sound::FixedChannelsMatrixMixer<Channels>;
     auto mixer = MixerType::Create();
     auto pollParams = Sound::CreateMixerNotificationParameters(std::move(params), mixer);
-    auto chipParams = CreateChipParameters(samplerate, std::move(pollParams));
+    auto chipParams = ChipParameters::Create(samplerate, std::move(pollParams));
     return Devices::DAC::CreateChip(std::move(chipParams), std::move(mixer));
   }
 
@@ -220,8 +168,9 @@ namespace Module::DAC
     };
   }
 
-  Holder::Ptr CreateHolder(Chiptune::Ptr chiptune)
+  Holder::Ptr CreateHolder(Chiptune::Ptr chiptune, Parameters::Accessor::Ptr properties)
   {
-    return MakePtr<DACHolder>(std::move(chiptune));
+    const FrameDurationParameter frameDuration(properties, DAC::BASE_FRAME_DURATION);
+    return MakePtr<DACHolder>(std::move(chiptune), std::move(properties), frameDuration.Get());
   }
 }  // namespace Module::DAC

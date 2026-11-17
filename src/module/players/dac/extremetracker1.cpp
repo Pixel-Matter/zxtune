@@ -150,21 +150,21 @@ namespace Module::ExtremeTracker1
     }
   };
 
-  class DataRenderer : public DAC::DataRenderer
+  class DataRenderer
   {
   public:
-    explicit DataRenderer(ModuleData::Ptr data)
-      : Data(std::move(data))
+    explicit DataRenderer(const ModuleData& data)
+      : Data(data)
     {
       Reset();
     }
 
-    void Reset() override
+    void Reset()
     {
       std::fill(Gliss.begin(), Gliss.end(), GlissData());
     }
 
-    void SynthesizeData(const TrackState& state, DAC::TrackBuilder& track) override
+    void SynthesizeData(const TrackState& state, DAC::TrackBuilder& track)
     {
       SynthesizeChannelsData(track);
       if (0 == state.Quirk)
@@ -189,7 +189,7 @@ namespace Module::ExtremeTracker1
 
     void GetNewLineState(const TrackState& state, DAC::TrackBuilder& track)
     {
-      if (const auto* const line = Data->GetLine(state))
+      if (const auto* const line = Data.GetLine(state))
       {
         line->ForEachChannel(
             [&](auto chan, const auto& src) { GetNewChannelState(src, Gliss[chan], track.GetChannel(chan)); });
@@ -240,7 +240,7 @@ namespace Module::ExtremeTracker1
     }
 
   private:
-    const ModuleData::Ptr Data;
+    const ModuleData& Data;
     std::array<GlissData, CHANNELS_COUNT> Gliss;
   };
 
@@ -248,14 +248,14 @@ namespace Module::ExtremeTracker1
 
 namespace Module::DAC
 {
-  Chiptune::Ptr CreateExtremeTracker1Chiptune(const Binary::Container& rawData, Parameters::Container::Ptr properties)
+  Chiptune::Ptr CreateExtremeTracker1Chiptune(const Binary::Container& rawData, PropertiesHelper& props)
   {
-    PropertiesHelper props(*properties, ExtremeTracker1::CHANNELS_COUNT);
+    props.SetChannels(ExtremeTracker1::CHANNELS_COUNT);
     ExtremeTracker1::DataBuilder dataBuilder(props);
     if (const auto container = Formats::Chiptune::ExtremeTracker1::Parse(rawData, dataBuilder))
     {
       props.SetSource(*container);
-      return CreateTrackingChiptune<ExtremeTracker1::DataRenderer>(dataBuilder.CaptureResult(), std::move(properties));
+      return CreateTrackingChiptune<ExtremeTracker1::DataRenderer>(dataBuilder.CaptureResult());
     }
     return {};
   }

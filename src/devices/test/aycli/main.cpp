@@ -3,10 +3,10 @@
 #include "sound/backends/storage.h"
 
 #include "async/worker.h"
-#include "core/core_parameters.h"
+#include "core/parameters.h"
 #include "parameters/container.h"
 #include "sound/mixer_factory.h"
-#include "sound/sound_parameters.h"
+#include "sound/parameters.h"
 
 #include "api_dynamic.h"
 #include "contract.h"
@@ -15,6 +15,7 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <utility>
 
 namespace
@@ -33,14 +34,14 @@ namespace
       return 0;
     }
 
-    uint64_t ClockFreq() const override
+    uint_t ClockFreq() const override
     {
-      return Parameters::ZXTune::Core::AYM::CLOCKRATE_DEFAULT;
+      return Parameters::ZXTune::Core::AYM::Clockrate::Default;
     };
 
     uint_t SoundFreq() const override
     {
-      return Parameters::ZXTune::Sound::FREQUENCY_DEFAULT;
+      return Parameters::ZXTune::Sound::Frequency::Default;
     }
 
     Devices::AYM::ChipType Type() const override
@@ -85,25 +86,6 @@ namespace
     Sound::FillMixer(*EmptyParams(), *mixer);
     return mixer;
   }
-
-  class StubState : public Module::State
-  {
-  public:
-    Time::AtMillisecond At() const override
-    {
-      return {};
-    }
-
-    Time::Milliseconds Total() const override
-    {
-      return {};
-    }
-
-    uint_t LoopCount() const override
-    {
-      return 0;
-    }
-  };
 
   class State
   {
@@ -166,7 +148,7 @@ namespace
 
     void ExecuteCycle() override
     {
-      static const StubState STATE;
+      static const Module::State STATE{};
       static const auto PERIOD = Time::Duration<Devices::AYM::TimeUnit>::FromFrequency(50);
       Worker->FrameStart(STATE);
       Data->Read(&Chunk.Data);
@@ -191,7 +173,8 @@ namespace
       Factory = std::move(factory);
     }
 
-    virtual void Register(Sound::BackendId /*id*/, const char* /*description*/, uint_t /*caps*/, const Error& /*status*/)
+    virtual void Register(Sound::BackendId /*id*/, const char* /*description*/, uint_t /*caps*/,
+                          const Error& /*status*/)
     {}
 
     virtual void Register(Sound::BackendId /*id*/, const char* /*description*/, uint_t /*caps*/) {}

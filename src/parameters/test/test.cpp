@@ -11,12 +11,16 @@
 #include "binary/container_factories.h"
 #include "parameters/container.h"
 #include "parameters/convert.h"
+#include "parameters/identifiers_set.h"
 #include "parameters/value_types.h"
+#include "parameters/value.h"
+#include "time/duration.h"
 
 #include "string_view.h"
 
 #include <iostream>
 #include <iterator>
+#include <type_traits>
 
 template<class T>
 std::ostream& operator<<(std::ostream& s, const std::vector<T>& v)
@@ -112,6 +116,77 @@ namespace
     }
   }
 
+  void TestIdentifiersSet()
+  {
+    std::cout << "---- Test for Parameters::IdentifiersSet" << std::endl;
+    using namespace Parameters;
+    const auto one = "one"_id;
+    const auto two = "two"_id;
+    const auto three = "three"_id;
+    {
+      const IdentifiersSet empty;
+      Test("empty.ToString()", empty.ToString(), String());
+      Test("empty.Contains(one)", empty.Contains(one), false);
+    }
+    {
+      const IdentifiersSet ids{one, two};
+      Test("ids.Contains(one)", ids.Contains(one), true);
+      Test("ids.Contains(two)", ids.Contains(two), true);
+      Test("ids.Contains(three)", ids.Contains(three), false);
+      Test("ids.ToString()", ids.ToString(), String("one\ntwo"));
+    }
+    {
+      // duplicates are ignored
+      const IdentifiersSet ids{one, one, two};
+      Test("dedup.ToString()", ids.ToString(), String("one\ntwo"));
+    }
+    {
+      // empty lines and trailing newline are ignored
+      const auto ids = IdentifiersSet::Parse("\none\n\ntwo\n");
+      Test("parse.Contains(one)", ids.Contains(one), true);
+      Test("parse.Contains(two)", ids.Contains(two), true);
+      Test("parse.Contains(three)", ids.Contains(three), false);
+      Test("parse.ToString()", ids.ToString(), String("one\ntwo"));
+      Test("parse empty", IdentifiersSet::Parse("").ToString(), String());
+    }
+    {
+      // views into the provided storage, which must outlive the set
+      const String storage = "one\ntwo";
+      const auto ids = IdentifiersSet::Parse(storage);
+      Test("external.Contains(one)", ids.Contains(one), true);
+      Test("external.Contains(three)", ids.Contains(three), false);
+      Test("external.ToString()", ids.ToString(), String("one\ntwo"));
+    }
+    {
+      const IdentifiersSet lhs{one, two};
+      const IdentifiersSet rhs{two, three};
+      const auto uni = lhs | rhs;
+      Test("union.Contains(one)", uni.Contains(one), true);
+      Test("union.Contains(two)", uni.Contains(two), true);
+      Test("union.Contains(three)", uni.Contains(three), true);
+      Test("union.ToString()", uni.ToString(), String("one\ntwo\nthree"));
+    }
+    {
+      // union with a single static identifier
+      const auto uni = IdentifiersSet{one} | two;
+      Test("set|id.Contains(two)", uni.Contains(two), true);
+      Test("set|id.ToString()", uni.ToString(), String("one\ntwo"));
+    }
+    {
+      // union with a single runtime identifier
+      const Identifier runtime("two");
+      const auto uni = IdentifiersSet{one} | runtime;
+      Test("set|runtime.Contains(two)", uni.Contains(two), true);
+    }
+    {
+      // parsed and static sets merge their views
+      const auto uni = IdentifiersSet::Parse("one") | IdentifiersSet{two};
+      Test("mixed union.Contains(one)", uni.Contains(one), true);
+      Test("mixed union.Contains(two)", uni.Contains(two), true);
+      Test("mixed union.ToString()", uni.ToString(), String("one\ntwo"));
+    }
+  }
+
   class CountingVisitor : public Parameters::Visitor
   {
   public:
@@ -167,6 +242,118 @@ namespace
     {
       Test("value", Parameters::ConvertToString(*out), Parameters::ConvertToString(*ref));
     }
+  }
+
+  namespace TestParams
+  {
+    using namespace Parameters;
+
+    struct INT : Value<uint64_t>
+    {
+      static constexpr auto Key = "int"_id;
+      static constexpr Type Default = 5, Min = 1, Max = 10;
+    };
+
+    struct STR : Value<StringType>
+    {
+      static constexpr auto Key = "str"_id;
+      static constexpr const char* Default = "def";
+    };
+
+    struct DATA : Value<Binary::Data>
+    {
+      static constexpr auto Key = "data"_id;
+    };
+
+    struct BOOL : Value<bool>
+    {
+      static constexpr auto Key = "bool"_id;
+      static constexpr Type Default = false;
+    };
+
+    struct DUR : Value<Time::Milliseconds>
+    {
+      static constexpr auto Key = "dur"_id;
+      static constexpr auto Default = Time::Seconds(2), Min = Time::Seconds(1), Max = Time::Seconds(30);
+    };
+
+  }  // namespace TestParams
+
+  template<class P>
+  concept CanGet = requires(Parameters::Accessor& ac)
+  {
+    Parameters::Get<P>(ac);
+  };
+
+  static_assert(std::is_same_v<Parameters::Value<uint64_t>::Protocol, Parameters::Detail::IntegerProtocol>);
+  static_assert(std::is_same_v<Parameters::Value<bool>::Protocol, Parameters::Detail::IntegerProtocol>);
+  static_assert(
+      std::is_same_v<Parameters::Value<Parameters::StringType>::Protocol, Parameters::Detail::StringProtocol>);
+  static_assert(std::is_same_v<Parameters::Value<Binary::Data>::Protocol, Parameters::Detail::DataProtocol>);
+  static_assert(std::is_same_v<Parameters::Value<Time::Milliseconds>::Protocol, Parameters::Detail::IntegerProtocol>);
+  static_assert(std::is_same_v<Parameters::Value<Time::Nanoseconds>::Protocol, Parameters::Detail::IntegerProtocol>);
+  static_assert(Parameters::Defaulted<TestParams::INT>);
+  static_assert(Parameters::Defaulted<TestParams::STR>);
+  static_assert(Parameters::Defaulted<TestParams::BOOL>);
+  static_assert(!Parameters::Defaulted<TestParams::DATA>);
+  static_assert(Parameters::Defaulted<TestParams::DUR>);
+  static_assert(CanGet<TestParams::INT> && CanGet<TestParams::STR> && !CanGet<TestParams::DATA>);
+  static_assert(Parameters::Ranged<TestParams::INT>);
+  static_assert(Parameters::Ranged<TestParams::DUR>);
+  static_assert(!Parameters::Ranged<TestParams::STR>);
+  static_assert(Parameters::Validate<TestParams::INT>(1));
+  static_assert(Parameters::Validate<TestParams::INT>(10));
+  static_assert(!Parameters::Validate<TestParams::INT>(0));
+  static_assert(!Parameters::Validate<TestParams::INT>(11));
+  static_assert(Parameters::Validate<TestParams::DUR>(Time::Seconds(1)));
+  static_assert(Parameters::Validate<TestParams::DUR>(Time::Seconds(30)));
+  static_assert(Parameters::Validate<TestParams::DUR>(Time::Milliseconds(2000)));
+  static_assert(!Parameters::Validate<TestParams::DUR>(Time::Milliseconds(999)));
+  static_assert(!Parameters::Validate<TestParams::DUR>(Time::Seconds(31)));
+
+  void TestValue()
+  {
+    std::cout << "---- Test for Parameters::Value" << std::endl;
+    using namespace Parameters;
+    using namespace TestParams;
+
+    const auto cont = Container::Create();
+    Test("unset int", Get<INT>(*cont), uint64_t(5));
+    Test("unset str", Get<STR>(*cont), String("def"));
+    Test("unset data", !!Find<DATA>(*cont), false);
+
+    Set<INT>(*cont, IntType(7));
+    Test("stored int", *Find<INT>(*cont), uint64_t(7));
+    Test("int is not str", !!Find<STR>(*cont), false);
+
+    Set<STR>(*cont, "hello"sv);
+    Test("stored str", *Find<STR>(*cont), String("hello"));
+
+    Set<DATA>(*cont, Binary::View("abcd", 4));
+    Test("stored data", !!Find<DATA>(*cont), true);
+
+    Test("unset bool", Get<BOOL>(*cont), false);
+
+    Set<BOOL>(*cont, true);
+    Test("stored bool true", *Find<BOOL>(*cont), true);
+    Test("bool true stored as 1", *cont->FindInteger("bool"_id), IntType(1));
+
+    Set<BOOL>(*cont, false);
+    Test("stored bool false", *Find<BOOL>(*cont), false);
+    Test("bool false stored as 0", *cont->FindInteger("bool"_id), IntType(0));
+
+    // any non-zero stored value means true
+    cont->SetValue("bool"_id, IntType(7));
+    Test("non-zero reads true", *Find<BOOL>(*cont), true);
+
+    Test("unset dur", Get<DUR>(*cont).Get(), uint32_t(2000));
+
+    Set<DUR>(*cont, Time::Milliseconds(250));
+    Test("stored dur", Find<DUR>(*cont)->Get(), uint32_t(250));
+    Test("dur stored as unit count", *cont->FindInteger("dur"_id), IntType(250));
+
+    Set<DUR>(*cont, Time::Seconds(1));
+    Test("converted dur", *cont->FindInteger("dur"_id), IntType(1000));
   }
 
   void TestContainer()
@@ -326,6 +513,8 @@ int main()
   try
   {
     TestIdentifier();
+    TestValue();
+    TestIdentifiersSet();
     TestContainer();
   }
   catch (int code)

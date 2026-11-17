@@ -38,9 +38,11 @@ namespace Module::FastTracker
     ENVELOPE_OFF,
     // r5
     NOISE,
+    // no parameters
+    RETRIG,
     // step
     SLIDE,
-    // step,note
+    // step
     SLIDE_NOTE
   };
 
@@ -120,14 +122,7 @@ namespace Module::FastTracker
     {
       MutableCell& channel = Patterns.GetChannel();
       channel.SetEnabled(true);
-      if (Command* cmd = channel.FindCommand(SLIDE_NOTE))
-      {
-        cmd->Param2 = note;
-      }
-      else
-      {
-        channel.SetNote(note);
-      }
+      channel.SetNote(note);
     }
 
     void SetSample(uint_t sample) override
@@ -160,9 +155,14 @@ namespace Module::FastTracker
       Patterns.GetChannel().AddCommand(NOISE, val);
     }
 
-    void SetSlide(uint_t step) override
+    void SetRetrig() override
     {
-      Patterns.GetChannel().AddCommand(SLIDE, int_t(step));
+      Patterns.GetChannel().AddCommand(RETRIG);
+    }
+
+    void SetSlide(int_t step) override
+    {
+      Patterns.GetChannel().AddCommand(SLIDE, step);
     }
 
     void SetNoteSlide(uint_t step) override
@@ -296,6 +296,7 @@ namespace Module::FastTracker
     ChannelState() = default;
 
     uint_t Note = 0;
+    uint_t PrevNote = 0;
     uint_t Envelope = 0;
     bool EnvelopeEnabled = false;
     uint_t Volume = 15;
@@ -312,19 +313,19 @@ namespace Module::FastTracker
     ToneSlider ToneSlide;
   };
 
-  class DataRenderer : public AYM::DataRenderer
+  class DataRenderer
   {
   public:
-    explicit DataRenderer(ModuleData::Ptr data)
-      : Data(std::move(data))
+    explicit DataRenderer(const ModuleData& data)
+      : Data(data)
     {
       Reset();
     }
 
-    void Reset() override
+    void Reset()
     {
-      const Sample& stubSample = Data->Samples.Get(0);
-      const Ornament& stubOrnament = Data->Ornaments.Get(0);
+      const Sample& stubSample = Data.Samples.Get(0);
+      const Ornament& stubOrnament = Data.Ornaments.Get(0);
       for (auto& dst : PlayerState)
       {
         dst = ChannelState();
@@ -334,17 +335,24 @@ namespace Module::FastTracker
         dst.OrnamentIterator.Reset();
       }
       Transposition = 0;
+      EnvelopeType = 0;
+      EnvelopeDirty = true;
     }
 
-    void SynthesizeData(const TrackState& state, AYM::TrackBuilder& track) override
+    void SynthesizeData(const TrackState& state, AYM::TrackBuilder& track)
     {
       if (0 == state.Quirk)
       {
         if (0 == state.Line)
         {
-          Transposition = Data->Order->GetTransposition(state.Position);
+          Transposition = Data.Order->GetTransposition(state.Position);
         }
         GetNewLineState(state, track);
+      }
+      if (EnvelopeDirty)
+      {
+        track.SetEnvelopeType(EnvelopeType);
+        EnvelopeDirty = false;
       }
       SynthesizeChannelsData(track);
     }
@@ -352,7 +360,7 @@ namespace Module::FastTracker
   private:
     void GetNewLineState(const TrackState& state, AYM::TrackBuilder& track)
     {
-      if (const auto* const line = Data->GetLine(state))
+      if (const auto* const line = Data.GetLine(state))
       {
         line->ForEachChannel([&](auto chan, const auto& src) { GetNewChannelState(src, PlayerState[chan], track); });
       }
@@ -381,15 +389,16 @@ namespace Module::FastTracker
       }
       if (const uint_t* note = src.GetNote())
       {
+        dst.PrevNote = dst.Note;
         dst.Note = *note + Transposition;
       }
       if (const uint_t* sample = src.GetSample())
       {
-        dst.SampleIterator.Set(Data->Samples.Get(*sample));
+        dst.SampleIterator.Set(Data.Samples.Get(*sample));
       }
       if (const uint_t* ornament = src.GetOrnament())
       {
-        dst.OrnamentIterator.Set(Data->Ornaments.Get(*ornament));
+        dst.OrnamentIterator.Set(Data.Ornaments.Get(*ornament));
         dst.OrnamentIterator.Reset();
         dst.NoiseAccumulator.Reset();
         dst.NoteAccumulator.Reset();
@@ -403,7 +412,8 @@ namespace Module::FastTracker
         switch (cmd.Type)
         {
         case ENVELOPE:
-          track.SetEnvelopeType(cmd.Param1);
+          EnvelopeType = cmd.Param1;
+          EnvelopeDirty = true;
           dst.Envelope = cmd.Param2;
           dst.EnvelopeEnabled = true;
           break;
@@ -413,18 +423,22 @@ namespace Module::FastTracker
         case NOISE:
           dst.Noise = cmd.Param1;
           break;
+        case RETRIG:
+          // 500 command retriggers the envelope by rewriting r13; the hardware-only tone phase reset
+          // is not representable in this model
+          EnvelopeDirty = true;
+          break;
         case SLIDE:
           dst.ToneSlide.SetGlissade(cmd.Param1);
           break;
         case SLIDE_NOTE:
         {
-          const int_t slide = track.GetSlidingDifference(cmd.Param2, dst.Note);
+          const int_t slide = track.GetSlidingDifference(dst.Note, dst.PrevNote);
           const int_t gliss = slide >= 0 ? -cmd.Param1 : cmd.Param1;
           const int_t direction = slide >= 0 ? -1 : +1;
           dst.ToneSlide.SetSlide(slide);
           dst.ToneSlide.SetGlissade(gliss);
           dst.ToneSlide.SetSlideDirection(direction);
-          dst.Note = cmd.Param2 + Transposition;
         }
         break;
         }
@@ -492,22 +506,23 @@ namespace Module::FastTracker
     }
 
   private:
-    const ModuleData::Ptr Data;
+    const ModuleData& Data;
     std::array<ChannelState, AYM::TRACK_CHANNELS> PlayerState;
     int_t Transposition = 0;
+    uint_t EnvelopeType = 0;
+    bool EnvelopeDirty = false;
   };
 }  // namespace Module::FastTracker
 
 namespace Module::AYM
 {
-  Chiptune::Ptr CreateFastTrackerChiptune(const Binary::Container& rawData, Parameters::Container::Ptr properties)
+  Chiptune::Ptr CreateFastTrackerChiptune(const Binary::Container& rawData, PropertiesHelper& props)
   {
-    PropertiesHelper props(*properties);
     FastTracker::DataBuilder dataBuilder(props);
     if (const auto container = Formats::Chiptune::FastTracker::Parse(rawData, dataBuilder))
     {
       props.SetSource(*container);
-      return CreateTrackingChiptune<FastTracker::DataRenderer>(dataBuilder.CaptureResult(), std::move(properties));
+      return CreateTrackingChiptune<FastTracker::DataRenderer>(dataBuilder.CaptureResult());
     }
     return {};
   }

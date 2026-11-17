@@ -106,14 +106,7 @@ namespace Module::ProTracker2
     {
       MutableCell& channel = Patterns.GetChannel();
       channel.SetEnabled(true);
-      if (Command* cmd = channel.FindCommand(GLISS_NOTE))
-      {
-        cmd->Param2 = int_t(note);
-      }
-      else
-      {
-        channel.SetNote(note);
-      }
+      channel.SetNote(note);
     }
 
     void SetSample(uint_t sample) override
@@ -136,9 +129,9 @@ namespace Module::ProTracker2
       Patterns.GetChannel().AddCommand(GLISS, val);
     }
 
-    void SetNoteGliss(int_t val, uint_t limit) override
+    void SetNoteGliss(int_t val, uint_t /*limit*/) override
     {
-      Patterns.GetChannel().AddCommand(GLISS_NOTE, val, limit);
+      Patterns.GetChannel().AddCommand(GLISS_NOTE, val);
     }
 
     void SetNoGliss() override
@@ -191,6 +184,9 @@ namespace Module::ProTracker2
     bool Enabled = false;
     bool Envelope = false;
     uint_t Note = 0;
+    // Native stores only the frequency delta and keeps the source note as the tone base.
+    // Both require the source note when the target note is kept in the cell.
+    uint_t PrevNote = 0;
     uint_t SampleNum;
     uint_t PosInSample = 0;
     uint_t OrnamentNum;
@@ -202,19 +198,19 @@ namespace Module::ProTracker2
     int_t Glissade = 0;
   };
 
-  class DataRenderer : public AYM::DataRenderer
+  class DataRenderer
   {
   public:
-    explicit DataRenderer(ModuleData::Ptr data)
-      : Data(std::move(data))
+    explicit DataRenderer(const ModuleData& data)
+      : Data(data)
     {}
 
-    void Reset() override
+    void Reset()
     {
       std::fill(PlayerState.begin(), PlayerState.end(), ChannelState());
     }
 
-    void SynthesizeData(const TrackState& state, AYM::TrackBuilder& track) override
+    void SynthesizeData(const TrackState& state, AYM::TrackBuilder& track)
     {
       if (0 == state.Quirk)
       {
@@ -226,7 +222,7 @@ namespace Module::ProTracker2
   private:
     void GetNewLineState(const TrackState& state, AYM::TrackBuilder& track)
     {
-      if (const auto* const line = Data->GetLine(state))
+      if (const auto* const line = Data.GetLine(state))
       {
         line->ForEachChannel([&](auto chan, const auto& src) { GetNewChannelState(src, PlayerState[chan], track); });
       }
@@ -244,9 +240,18 @@ namespace Module::ProTracker2
         }
         dst.PosInSample = dst.PosInOrnament = 0;
       }
-      if (const uint_t* note = src.GetNote())
+      const uint_t* const note = src.GetNote();
+      if (note)
       {
         assert(src.GetEnabled());
+        // A note-gliss keeps the source note sounding until the slide completes,
+        // so the cell note (the target) cannot become the tone base immediately.
+        bool noteGliss = false;
+        for (const auto& cmd : src.GetCommands())
+        {
+          noteGliss = noteGliss || cmd.Type == GLISS_NOTE;
+        }
+        dst.PrevNote = noteGliss ? dst.PrevNote : *note;
         dst.Note = *note;
         dst.Sliding = dst.Glissade = 0;
         dst.SlidingTargetNote = LIMITER;
@@ -283,7 +288,7 @@ namespace Module::ProTracker2
         case GLISS_NOTE:
           dst.Sliding = 0;
           dst.Glissade = cmd.Param1;
-          dst.SlidingTargetNote = cmd.Param2;
+          dst.SlidingTargetNote = dst.Note;
           break;
         case GLISS:
           dst.Glissade = cmd.Param1;
@@ -315,12 +320,12 @@ namespace Module::ProTracker2
         return;
       }
 
-      const Sample& curSample = Data->Samples.Get(dst.SampleNum);
+      const Sample& curSample = Data.Samples.Get(dst.SampleNum);
       const Sample::Line& curSampleLine = curSample.GetLine(dst.PosInSample);
-      const Ornament& curOrnament = Data->Ornaments.Get(dst.OrnamentNum);
+      const Ornament& curOrnament = Data.Ornaments.Get(dst.OrnamentNum);
 
       // apply tone
-      const int_t halftones = int_t(dst.Note) + curOrnament.GetLine(dst.PosInOrnament);
+      const int_t halftones = int_t(dst.PrevNote) + curOrnament.GetLine(dst.PosInOrnament);
       channel.SetTone(halftones, dst.Sliding + curSampleLine.Vibrato);
       if (curSampleLine.ToneMask)
       {
@@ -346,12 +351,13 @@ namespace Module::ProTracker2
       // recalculate gliss
       if (dst.SlidingTargetNote != LIMITER)
       {
-        const int_t absoluteSlidingRange = track.GetSlidingDifference(dst.Note, dst.SlidingTargetNote);
+        const int_t absoluteSlidingRange = track.GetSlidingDifference(dst.PrevNote, dst.SlidingTargetNote);
         const int_t realSlidingRange = absoluteSlidingRange - (dst.Sliding + dst.Glissade);
 
         if ((dst.Glissade > 0 && realSlidingRange <= 0) || (dst.Glissade < 0 && realSlidingRange >= 0))
         {
           dst.Note = dst.SlidingTargetNote;
+          dst.PrevNote = dst.SlidingTargetNote;
           dst.SlidingTargetNote = LIMITER;
           dst.Sliding = dst.Glissade = 0;
         }
@@ -369,21 +375,20 @@ namespace Module::ProTracker2
     }
 
   private:
-    const ModuleData::Ptr Data;
+    const ModuleData& Data;
     std::array<ChannelState, AYM::TRACK_CHANNELS> PlayerState;
   };
 }  // namespace Module::ProTracker2
 
 namespace Module::AYM
 {
-  Chiptune::Ptr CreateProTracker2Chiptune(const Binary::Container& rawData, Parameters::Container::Ptr properties)
+  Chiptune::Ptr CreateProTracker2Chiptune(const Binary::Container& rawData, PropertiesHelper& props)
   {
-    PropertiesHelper props(*properties);
     ProTracker2::DataBuilder dataBuilder(props);
     if (const auto container = Formats::Chiptune::ProTracker2::Parse(rawData, dataBuilder))
     {
       props.SetSource(*container);
-      return CreateTrackingChiptune<ProTracker2::DataRenderer>(dataBuilder.CaptureResult(), std::move(properties));
+      return CreateTrackingChiptune<ProTracker2::DataRenderer>(dataBuilder.CaptureResult());
     }
     return {};
   }

@@ -26,7 +26,7 @@ namespace Module::SQDigitalTracker
 {
   const std::size_t CHANNELS_COUNT = 4;
 
-  const uint64_t Z80_FREQ = 3500000;
+  const uint_t Z80_FREQ = 3500000;
   const uint_t TICKS_PER_CYCLE = 346;
   const uint_t C_1_STEP = 44;
   const uint_t SAMPLES_FREQ = Z80_FREQ * C_1_STEP / TICKS_PER_CYCLE / 256;
@@ -159,21 +159,21 @@ namespace Module::SQDigitalTracker
     }
   };
 
-  class DataRenderer : public DAC::DataRenderer
+  class DataRenderer
   {
   public:
-    explicit DataRenderer(ModuleData::Ptr data)
-      : Data(std::move(data))
+    explicit DataRenderer(const ModuleData& data)
+      : Data(data)
     {
       Reset();
     }
 
-    void Reset() override
+    void Reset()
     {
       std::fill(Volumes.begin(), Volumes.end(), VolumeState());
     }
 
-    void SynthesizeData(const TrackState& state, DAC::TrackBuilder& track) override
+    void SynthesizeData(const TrackState& state, DAC::TrackBuilder& track)
     {
       SynthesizeChannelsData(track);
       if (0 == state.Quirk)
@@ -198,7 +198,7 @@ namespace Module::SQDigitalTracker
 
     void GetNewLineState(const TrackState& state, DAC::TrackBuilder& track)
     {
-      if (const auto* const line = Data->GetLine(state))
+      if (const auto* const line = Data.GetLine(state))
       {
         line->ForEachChannel(
             [&](auto chan, const auto& src) { GetNewChannelState(src, Volumes[chan], track.GetChannel(chan)); });
@@ -247,7 +247,7 @@ namespace Module::SQDigitalTracker
     }
 
   private:
-    const ModuleData::Ptr Data;
+    const ModuleData& Data;
     std::array<VolumeState, CHANNELS_COUNT> Volumes;
   };
 
@@ -255,14 +255,14 @@ namespace Module::SQDigitalTracker
 
 namespace Module::DAC
 {
-  Chiptune::Ptr CreateSQDigitalTrackerChiptune(const Binary::Container& rawData, Parameters::Container::Ptr properties)
+  Chiptune::Ptr CreateSQDigitalTrackerChiptune(const Binary::Container& rawData, PropertiesHelper& props)
   {
-    PropertiesHelper props(*properties, SQDigitalTracker::CHANNELS_COUNT);
+    props.SetChannels(SQDigitalTracker::CHANNELS_COUNT);
     SQDigitalTracker::DataBuilder dataBuilder(props);
     if (const auto container = Formats::Chiptune::SQDigitalTracker::Parse(rawData, dataBuilder))
     {
       props.SetSource(*container);
-      return CreateTrackingChiptune<SQDigitalTracker::DataRenderer>(dataBuilder.CaptureResult(), std::move(properties));
+      return CreateTrackingChiptune<SQDigitalTracker::DataRenderer>(dataBuilder.CaptureResult());
     }
     return {};
   }

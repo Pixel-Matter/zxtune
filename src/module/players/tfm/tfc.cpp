@@ -83,15 +83,11 @@ namespace Module::TFC
   public:
     using RWPtr = std::shared_ptr<ModuleData>;
 
-    uint_t GetTotalFrames() const override
+    FramedInformation GetInformation() const override
     {
-      return static_cast<uint_t>(std::max({Data[0].GetSize(), Data[1].GetSize(), Data[2].GetSize(), Data[3].GetSize(),
-                                           Data[4].GetSize(), Data[5].GetSize()}));
-    }
-
-    uint_t GetLoopFrame() const override
-    {
-      return 0;
+      return {.Total = static_cast<uint_t>(std::max({Data[0].GetSize(), Data[1].GetSize(), Data[2].GetSize(),
+                                                     Data[3].GetSize(), Data[4].GetSize(), Data[5].GetSize()})),
+              .Loop = 0};
     }
 
     void Get(uint_t frameNum, Devices::TFM::Registers& res) const override
@@ -226,19 +222,20 @@ namespace Module::TFC
 
 namespace Module::TFM
 {
-  Chiptune::Ptr CreateTFCChiptune(const Binary::Container& rawData, Parameters::Container::Ptr properties)
+  Chiptune::Ptr CreateTFCChiptune(const Binary::Container& rawData, PropertiesHelper& props)
   {
-    PropertiesHelper props(*properties);
     TFC::DataBuilder dataBuilder(props);
     if (const auto container = Formats::Chiptune::TFC::Parse(rawData, dataBuilder))
     {
       auto data = dataBuilder.CaptureResult();
-      if (data->GetTotalFrames())
+      if (data->GetInformation().Total)
       {
         props.SetSource(*container);
         props.SetPlatform(Platforms::ZX_SPECTRUM);
         props.SetChannels("FM"sv, Devices::TFM::VOICES);
-        return CreateStreamedChiptune(dataBuilder.GetFrameDuration(), std::move(data), std::move(properties));
+        const auto frameDuration = dataBuilder.GetFrameDuration();
+        props.SetFrameDuration(frameDuration);
+        return CreateStreamedChiptune(frameDuration, std::move(data));
       }
     }
     return {};

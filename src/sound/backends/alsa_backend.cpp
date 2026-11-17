@@ -12,14 +12,13 @@
 #include "sound/backends/backend_impl.h"
 #include "sound/backends/gates/alsa_api.h"
 #include "sound/backends/l10n.h"
+#include "sound/backends/parameters.h"
 #include "sound/backends/storage.h"
 #include "sound/backends/volume_control.h"
 
 #include "debug/log.h"
-#include "math/numeric.h"
-#include "sound/backends_parameters.h"
+#include "sound/parameters.h"
 #include "sound/render_params.h"
-#include "sound/sound_parameters.h"
 #include "strings/split.h"
 
 #include "byteorder.h"
@@ -35,9 +34,6 @@ namespace Sound::Alsa
   const Debug::Stream Dbg("Sound::Backend::Alsa");
 
   const uint_t CAPABILITIES = CAP_TYPE_SYSTEM | CAP_FEAT_HWVOLUME;
-
-  const uint_t LATENCY_MIN = 20;
-  const uint_t LATENCY_MAX = 10000;
 
   inline void CheckResult(Api& api, int res, Error::LocationRef loc)
   {
@@ -296,7 +292,7 @@ namespace Sound::Alsa
       {}
     }
 
-    void SetParameters(Time::Milliseconds lat, const RenderParameters& params)
+    void SetParameters(Time::Milliseconds lat, uint_t freq)
     {
       const auto hwParams =
           Allocate<snd_pcm_hw_params_t>(AlsaApi, &Api::snd_pcm_hw_params_malloc, &Api::snd_pcm_hw_params_free);
@@ -315,7 +311,6 @@ namespace Sound::Alsa
         throw Error(THIS_LINE, translate("No suitable formats supported by ALSA."));
       }
 
-      const unsigned freq = params.SoundFreq();
       const unsigned latency = Time::Microseconds(lat).Get();
       Dbg("Setting parameters: rate={}Hz latency={}uS", freq, latency);
       Pcm.CheckedCall(&Api::snd_pcm_set_params, fmt.Get(), SND_PCM_ACCESS_RW_INTERLEAVED, unsigned(Sample::CHANNELS),
@@ -664,26 +659,24 @@ namespace Sound::Alsa
 
     String GetDeviceName() const
     {
-      using namespace Parameters::ZXTune::Sound::Backends::Alsa;
-      return Parameters::GetString(Accessor, DEVICE, DEVICE_DEFAULT);
+      return Parameters::Get<Parameters::ZXTune::Sound::Backends::Alsa::Device>(Accessor);
     }
 
     String GetMixerName() const
     {
-      using namespace Parameters::ZXTune::Sound::Backends::Alsa;
-      return Parameters::GetString(Accessor, MIXER);
+      return Parameters::Get<Parameters::ZXTune::Sound::Backends::Alsa::Mixer>(Accessor);
     }
 
     Time::Milliseconds GetLatency() const
     {
       using namespace Parameters::ZXTune::Sound::Backends::Alsa;
-      const auto val = Parameters::GetInteger<uint_t>(Accessor, LATENCY, LATENCY_DEFAULT);
-      if (!Math::InRange(val, LATENCY_MIN, LATENCY_MAX))
+      const auto val = Parameters::Get<Latency>(Accessor);
+      if (!Parameters::Validate<Latency>(val))
       {
         throw MakeFormattedError(THIS_LINE, translate("ALSA backend error: latency ({0}) is out of range ({1}..{2})."),
-                                 val, LATENCY_MIN, LATENCY_MAX);
+                                 val.Get(), Latency::Min.Get(), Latency::Max.Get());
       }
-      return Time::Milliseconds{val};
+      return val;
     }
 
   private:
@@ -751,13 +744,12 @@ namespace Sound::Alsa
 
     AlsaObjects OpenDevices() const
     {
-      const RenderParameters::Ptr sound = RenderParameters::Create(Params);
       const BackendParameters backend(*Params);
       const Identifier deviceId(backend.GetDeviceName());
 
       AlsaObjects res;
       res.Dev = MakePtr<DeviceWrapper>(AlsaApi, deviceId);
-      res.Dev->SetParameters(backend.GetLatency(), *sound);
+      res.Dev->SetParameters(backend.GetLatency(), GetSoundFrequency(*Params));
       res.Mix = MakePtr<Mixer>(AlsaApi, deviceId, backend.GetMixerName());
       res.Vol = MakePtr<VolumeControl>(res.Mix);
       return res;
@@ -962,7 +954,7 @@ namespace Sound::Alsa
     static Ptr CreateDefault(Api::Ptr api)
     {
       static const auto DEFAULT_DEVICE_NAME = "Default"sv;
-      return MakePtr<DeviceInfo>(std::move(api), Parameters::ZXTune::Sound::Backends::Alsa::DEVICE_DEFAULT,
+      return MakePtr<DeviceInfo>(std::move(api), Parameters::ZXTune::Sound::Backends::Alsa::Device::Default,
                                  DEFAULT_DEVICE_NAME, DEFAULT_DEVICE_NAME);
     }
 

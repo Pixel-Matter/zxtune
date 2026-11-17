@@ -9,7 +9,7 @@
 #include "uzx/ay_module.h"
 
 #include "binary/container_factories.h"
-#include "core/core_parameters.h"
+#include "core/parameters.h"
 #include "formats/chiptune/decoders.h"
 #include "module/players/aym/all.h"
 #include "module/players/aym/aym_base.h"
@@ -172,8 +172,7 @@ namespace UzxAY
           tune.RowStarts.push_back(frame);
           positionStarts.try_emplace(state.Track->Position, frame);
         }
-        onFrame(iterator.GetData());
-        iterator.NextFrame();
+        onFrame(iterator.Advance());
       }
     }
 
@@ -205,7 +204,7 @@ namespace UzxAY
     void ReadText(Tune& tune, const Parameters::Accessor& properties, bool first)
     {
       Join(tune.Title, Strings::ToAutoUtf8(FindText(properties, Module::ATTR_TITLE)), first);  // Vortex text keeps CP1251/866
-      Join(tune.NoteTable, FindText(properties, Parameters::ZXTune::Core::AYM::TABLE), first);
+      Join(tune.NoteTable, FindText(properties, Parameters::ZXTune::Core::AYM::Table::Key), first);
     }
 
     std::optional<Tune> NotEmpty(Tune tune)
@@ -221,11 +220,12 @@ namespace UzxAY
     class Together
     {
     public:
-      explicit Together(const std::vector<MA::Chiptune::Ptr>& chiptunes)
+      explicit Together(const std::vector<const MA::Holder*>& modules)
       {
-        for (const auto& chiptune : chiptunes)
+        for (const auto* module : modules)
         {
-          Chips.push_back(chiptune->CreateDataIterator(MA::TrackParameters::Create(chiptune->GetProperties())));
+          Chips.push_back(module->GetChiptune()->CreateDataIterator(
+              MA::TrackParameters::Create(module->GetModuleProperties())));
         }
       }
 
@@ -234,34 +234,27 @@ namespace UzxAY
         return Chips.front()->GetState();
       }
 
-      std::vector<Registers> GetData() const
+      std::vector<Registers> Advance()
       {
         std::vector<Registers> regs;
         for (const auto& chip : Chips)
         {
-          regs.push_back(chip->GetData());
+          regs.push_back(chip->Advance());
         }
         return regs;
-      }
-
-      void NextFrame()
-      {
-        for (const auto& chip : Chips)
-        {
-          chip->NextFrame();
-        }
       }
 
     private:
       std::vector<MA::DataIterator::Ptr> Chips;
     };
 
-    std::optional<Tune> Record(const std::vector<MA::Chiptune::Ptr>& chiptunes, std::string format)
+    // The modules stay owned by the caller.
+    std::optional<Tune> Record(const std::vector<const MA::Holder*>& modules, std::string format)
     {
       Tune result;
       result.Format = std::move(format);
-      Together together(chiptunes);
-      std::vector<Recorder> chips(chiptunes.size());
+      Together together(modules);
+      std::vector<Recorder> chips(modules.size());
       const auto record = [&chips](const std::vector<Registers>& regs) {
         for (std::size_t chip = 0; chip != chips.size(); ++chip)
         {
@@ -269,10 +262,10 @@ namespace UzxAY
         }
       };
       PlayToLoop(together, record, result);
-      result.FrameRate = FrameRate(chiptunes.front()->GetFrameDuration());
+      result.FrameRate = FrameRate(modules.front()->GetChiptune()->GetFrameDuration());
       for (std::size_t chip = 0; chip != chips.size(); ++chip)
       {
-        ReadText(result, *chiptunes[chip]->GetProperties(), chip == 0);
+        ReadText(result, *modules[chip]->GetModuleProperties(), chip == 0);
         result.Chips.push_back(std::move(chips[chip].Frames));
       }
       return NotEmpty(std::move(result));
@@ -282,7 +275,7 @@ namespace UzxAY
     {
       if (const auto* single = dynamic_cast<const MA::Holder*>(&holder))
       {
-        return Record({single->GetChiptune()}, std::move(format));
+        return Record({single}, std::move(format));
       }
       const auto* pair = dynamic_cast<const Module::TurboSound::Holder*>(&holder);
       if (!pair)
@@ -292,7 +285,7 @@ namespace UzxAY
       Tune result;
       result.Format = std::move(format);
       const auto& chiptune = pair->GetChiptune();
-      const auto props = chiptune.GetProperties();
+      const auto props = pair->GetModuleProperties();
       const auto iterator =
           chiptune.CreateDataIterator(MA::TrackParameters::Create(props, 0), MA::TrackParameters::Create(props, 1));
       Recorder chips[2];
@@ -339,19 +332,21 @@ namespace UzxAY
     std::optional<Tune> PlayVortexText(std::string_view text, const AnyModuleFactory& formats)
     {
       const auto params = Parameters::Container::Create();
-      std::vector<MA::Chiptune::Ptr> chiptunes;
+      std::vector<Module::Holder::Ptr> holders;
+      std::vector<const MA::Holder*> modules;
       for (const auto module : SplitVortexModules(text))
       {
         const auto data = Binary::CreateContainer(Binary::View(module.data(), module.size()));
-        const auto holder = data ? formats.CreateModule(*params, *data, Parameters::Container::Create()) : nullptr;
+        auto holder = data ? formats.CreateModule(*params, *data, Parameters::Container::Create()) : nullptr;
         const auto* single = dynamic_cast<const MA::Holder*>(holder.get());
         if (!single)
         {
           return {};
         }
-        chiptunes.push_back(single->GetChiptune());
+        holders.push_back(std::move(holder));
+        modules.push_back(single);
       }
-      auto tune = Record(chiptunes, formats.LastFormat);
+      auto tune = Record(modules, formats.LastFormat);
       if (!tune)
       {
         return {};
