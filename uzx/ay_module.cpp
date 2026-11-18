@@ -149,11 +149,12 @@ namespace UzxAY
       Registers Last;
     };
 
-    // Calls onFrame with each frame's registers up to the loop; sets the tune's row starts and loop frame.
+    // Calls onFrame with each frame's registers up to the loop; sets the tune's row and pattern starts and loop frame.
     template<class Iterator, class OnFrame>
     void PlayToLoop(Iterator& iterator, OnFrame onFrame, Tune& tune)
     {
       std::map<uint_t, std::size_t> positionStarts;  // the frame each order list position starts at
+      std::optional<uint_t> position;                // the one that plays
       for (std::size_t frame = 0; frame != MAX_FRAMES; ++frame)
       {
         const auto state = iterator.GetState();
@@ -171,6 +172,11 @@ namespace UzxAY
         {
           tune.RowStarts.push_back(frame);
           positionStarts.try_emplace(state.Track->Position, frame);
+          if (position != state.Track->Position)
+          {
+            position = state.Track->Position;
+            tune.PatternStarts.push_back(frame);
+          }
         }
         onFrame(iterator.Advance());
       }

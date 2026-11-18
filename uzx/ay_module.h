@@ -33,6 +33,8 @@ namespace UzxAY
     double ChipClock = 0;                   // Hz; 0 when the module doesn't store it (only Vortex Tracker text does)
     std::vector<std::vector<Frame>> Chips;  // one per AY chip, two or three for Turbo Sound; all the same length
     std::vector<std::size_t> RowStarts;     // the frame each pattern row starts at, in play order
+    std::vector<std::size_t> PatternStarts; // the frame each position of the order list starts at, in play order;
+                                            // every one is a row start
     std::size_t LoopFrame = 0;              // the frame the tune loops back to; 0 when it loops to its start
   };
 
